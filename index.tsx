@@ -2,6 +2,8 @@ import React, { useReducer, useEffect, useState, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 // Browser-compatible extraction engine - HACS 5.0 compliant
 import { BrowserExtractionEngine } from './src/extraction/BrowserExtractionEngine';
+// Backend API Client
+import { apiClient, BackendExtractionResult } from './src/api/BackendClient';
 import { GoogleGenAI } from "@google/genai";
 import {
     ReconResult, PilferResult, RefactorResult, ComparativeResult, BlueprintResult,
@@ -580,11 +582,65 @@ function App() {
     const handleRecon = async () => {
         if (!chat) return;
         dispatch({ type: 'SET_APP_STATE', payload: 'CASING' });
-        
+
         // Check if user has enabled real extraction
         const useRealExtraction = localStorage.getItem('pilferUseRealExtraction') === 'true';
-        
+
         if (useRealExtraction && url && !pageSource) {
+            // PRIORITY 1: Try Backend API (most powerful)
+            try {
+                console.log('[Pilfer] Checking backend API availability...');
+                const backendAvailable = await apiClient.isAvailable();
+
+                if (backendAvailable) {
+                    console.log('[Pilfer] Backend API available! Initiating server-side extraction...');
+
+                    const apiResponse = await apiClient.extract({
+                        url,
+                        options: {
+                            preferredEngine: 'playwright',
+                            timeout: 30000,
+                            enableJavaScript: true,
+                            extractAssets: true,
+                            analysisDepth: 'moderate',
+                            waitUntil: 'networkidle',
+                            scrollToLoad: true
+                        },
+                        context: {
+                            persona,
+                            targetFramework: frameworkTarget,
+                            targetStyling: stylingTarget
+                        }
+                    });
+
+                    if (apiResponse.success && apiResponse.data && apiResponse.data.reconResult) {
+                        console.log('[Pilfer] Backend API extraction successful!', apiResponse);
+                        console.log('[Pilfer] Framework detected:', apiResponse.data.framework?.primaryFramework.name);
+                        console.log('[Pilfer] Assets extracted:', apiResponse.data.assets?.metadata.totalAssets);
+                        console.log('[Pilfer] Components analyzed:', apiResponse.data.componentAnalysis?.metadata.totalComponents);
+                        console.log('[Pilfer] Cache status:', apiResponse.metadata.cacheStatus);
+
+                        dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
+                            id: apiResponse.data.reconResult.id,
+                            type: 'Recon',
+                            title: `Backend Extraction: ${url}`,
+                            timestamp: Date.now(),
+                            url
+                        }});
+                        dispatch({ type: 'SET_RECON_RESULT', payload: apiResponse.data.reconResult });
+                        dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
+                        return;
+                    } else {
+                        console.warn('[Pilfer] Backend API returned no results, falling back...', apiResponse.error);
+                    }
+                } else {
+                    console.log('[Pilfer] Backend API not available, falling back to browser extraction...');
+                }
+            } catch (error) {
+                console.warn('[Pilfer] Backend API extraction failed, falling back:', error);
+            }
+
+            // PRIORITY 2: Try Browser-based extraction (limited capability)
             try {
                 // {SCD: Professional Browser Extraction Integration}
                 console.log('[Pilfer] Initiating browser-based real extraction...');
