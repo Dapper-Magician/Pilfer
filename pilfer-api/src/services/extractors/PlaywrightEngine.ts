@@ -21,6 +21,7 @@ import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import { FrameworkDetector } from '../detectors/FrameworkDetector';
 import { AssetHarvester } from '../harvesters/AssetHarvester';
+import { ComponentAnalyzer } from '../analyzers/ComponentAnalyzer';
 import type {
   ExtractionEngine,
   ExtractionRequest,
@@ -36,7 +37,8 @@ import type {
   NetworkRequest,
   ConsoleMessage,
   FrameworkDetectionResult,
-  AssetCatalog
+  AssetCatalog,
+  ComponentAnalysisResult
 } from '../../types';
 
 /**
@@ -120,12 +122,14 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
   private contextPool: BrowserContextPool;
   private frameworkDetector: FrameworkDetector;
   private assetHarvester: AssetHarvester;
+  private componentAnalyzer: ComponentAnalyzer;
   private isInitialized = false;
 
   constructor() {
     this.contextPool = new BrowserContextPool();
     this.frameworkDetector = new FrameworkDetector();
     this.assetHarvester = new AssetHarvester();
+    this.componentAnalyzer = new ComponentAnalyzer();
   }
 
   /**
@@ -188,11 +192,17 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
         logger.info('Extracting page data...');
         const html = await page.content();
 
-        const [reconResult, frameworkDetection, assets] = await Promise.all([
+        // First: Get framework detection (needed for component analysis)
+        const frameworkDetection = await this.frameworkDetector.detect(page, html);
+
+        // Then: Extract everything else in parallel
+        const [reconResult, assets, componentAnalysis] = await Promise.all([
           this.extractReconResult(page, request),
-          this.frameworkDetector.detect(page, html),
           request.options.extractAssets
             ? this.assetHarvester.harvest(page, request.url)
+            : Promise.resolve(null),
+          request.options.analyzeComponents
+            ? this.componentAnalyzer.analyze(page, frameworkDetection)
             : Promise.resolve(null)
         ]);
 
@@ -201,7 +211,8 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
         logger.info(`Extraction completed in ${executionTime}ms`, {
           framework: frameworkDetection.primaryFramework.name,
           confidence: frameworkDetection.primaryFramework.confidence,
-          assetsExtracted: assets ? assets.metadata.totalAssets : 0
+          assetsExtracted: assets ? assets.metadata.totalAssets : 0,
+          componentsAnalyzed: componentAnalysis ? componentAnalysis.metadata.totalComponents : 0
         });
 
         return {
@@ -216,6 +227,8 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
           html,
           htmlContent: html,
           framework: frameworkDetection,
+          componentTree: componentAnalysis?.componentTree,
+          componentAnalysis: componentAnalysis || undefined,
           assets: assets || undefined,
           networkTraffic: networkMonitor.getRequests(),
           consoleMessages: consoleMonitor.getMessages(),

@@ -122,6 +122,7 @@ export interface ExtractionResult {
 
   // Advanced analysis
   componentTree?: ComponentNode[];
+  componentAnalysis?: ComponentAnalysisResult;
   framework?: FrameworkDetectionResult;
   assets?: AssetCatalog;
   performance?: PerformanceMetrics;
@@ -163,7 +164,18 @@ export interface CoreStyleInfo {
 
 export interface ComponentNode {
   name: string;
+  type: string;
+  attributes?: Record<string, string>;
   children?: ComponentNode[];
+  metadata?: {
+    depth: number;
+    complexity: number;
+    hasState: boolean;
+    hasEvents: boolean;
+    isCustomElement: boolean;
+    classes: string[];
+    id?: string;
+  };
 }
 
 export interface ReconResult {
@@ -172,6 +184,36 @@ export interface ReconResult {
   typography: TypographyInfo[];
   coreStyles: CoreStyleInfo[];
   pageArchitecture: ComponentNode[];
+}
+
+// ============================================================================
+// COMPONENT ANALYSIS
+// ============================================================================
+
+export interface ComponentAnalysisResult {
+  componentTree: ComponentNode[];
+  libraries: ComponentLibrary[];
+  patterns: ComponentPattern[];
+  metadata: {
+    totalComponents: number;
+    maxDepth: number;
+    analysisTime: number;
+    framework: string;
+  };
+}
+
+export interface ComponentLibrary {
+  name: string;
+  confidence: number;
+  components: string[];
+}
+
+export interface ComponentPattern {
+  type: 'repeated-component' | 'layout-pattern' | 'ui-pattern' | 'behavioral-pattern';
+  name: string;
+  occurrences: number;
+  confidence: number;
+  description: string;
 }
 
 // ============================================================================
