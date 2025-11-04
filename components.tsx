@@ -6,6 +6,15 @@ import {
     Theme, Layout
 } from './types';
 
+// Backend extraction components
+export {
+    FrameworkBadge,
+    ExtractionMetadataBadge,
+    AssetStats,
+    ComponentAnalysisStats,
+    BackendExtractionPanel
+} from './src/components/BackendExtractionComponents';
+
 mermaid.initialize({ startOnLoad: false, theme: 'dark', 'themeVariables': { 'background': '#0d0d1a' } });
 
 export function CodeBlock({ code }: { code: string }) {

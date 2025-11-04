@@ -344,6 +344,8 @@ export interface AppState {
     currentSession: SessionWorkspace;
     historicalSessions: HistoricalSession[];
     showOnlyCurrentSession: boolean;
+    // Backend Extraction Data
+    backendExtractionData: BackendExtractionData | null;
     theme: Theme;
     fontSize: number;
     layout: Layout;
@@ -377,6 +379,56 @@ export interface AppState {
     } | null;
 }
 
+// Backend Extraction Data Types
+export interface BackendExtractionData {
+    framework?: {
+        primaryFramework: {
+            name: string;
+            version: string;
+            confidence: number;
+        };
+        detectedFrameworks: any[];
+        stateManagement: any[];
+        routing: any;
+        buildTool: any;
+    };
+    assets?: {
+        images: any[];
+        fonts: any[];
+        stylesheets: any[];
+        scripts: any[];
+        media: any[];
+        metadata: {
+            totalAssets: number;
+            harvestTime: number;
+            baseUrl: string;
+        };
+    };
+    componentAnalysis?: {
+        componentTree: any[];
+        libraries: Array<{
+            name: string;
+            confidence: number;
+            components: string[];
+        }>;
+        patterns: Array<{
+            type: string;
+            name: string;
+            occurrences: number;
+            confidence: number;
+            description: string;
+        }>;
+        metadata: {
+            totalComponents: number;
+            maxDepth: number;
+            analysisTime: number;
+            framework: string;
+        };
+    };
+    cacheStatus?: 'HIT' | 'MISS' | 'STALE';
+    executionTime?: number;
+}
+
 export type AppAction =
     | { type: 'SET_FIELD'; payload: { field: keyof AppState; value: any } }
     | { type: 'SET_APP_STATE'; payload: AppStatus }
@@ -386,6 +438,7 @@ export type AppAction =
     | { type: 'STREAM_UPDATE'; payload: string }
     | { type: 'STREAM_END' }
     | { type: 'SET_RECON_RESULT'; payload: ReconResult }
+    | { type: 'SET_BACKEND_EXTRACTION_DATA'; payload: BackendExtractionData }
     | { type: 'ADD_RESULT'; payload: { id: string, type: LiveResultType, result: any } }
     | { type: 'ADD_HISTORY_ENTRY'; payload: HistoryEntry }
     | { type: 'SET_ERROR'; payload: string | null }

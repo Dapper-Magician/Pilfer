@@ -13,7 +13,8 @@ import {
 } from './types';
 import {
     ReconCard, ResultCard, RefactorResultCard, ComparativeResultCard, BlueprintResultCard,
-    StreamingResultCard, HistoryPanel, CommandPalette, SettingsPanel, SafehouseModal
+    StreamingResultCard, HistoryPanel, CommandPalette, SettingsPanel, SafehouseModal,
+    BackendExtractionPanel
 } from './components';
 
 
@@ -149,6 +150,8 @@ const initialState: AppState = {
     currentSession: createInitialSession(),
     historicalSessions: [],
     showOnlyCurrentSession: true,
+    // Backend Extraction Data
+    backendExtractionData: null,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -169,6 +172,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
             return { ...state, liveResult: null, appState: 'IDLE' };
         case 'SET_RECON_RESULT':
             return { ...state, reconResult: action.payload };
+        case 'SET_BACKEND_EXTRACTION_DATA':
+            return { ...state, backendExtractionData: action.payload };
         case 'ADD_RESULT':
             const { id, type, result } = action.payload;
             // Check if this ID already exists in history to avoid duplicates
@@ -620,6 +625,15 @@ function App() {
                         console.log('[Pilfer] Components analyzed:', apiResponse.data.componentAnalysis?.metadata.totalComponents);
                         console.log('[Pilfer] Cache status:', apiResponse.metadata.cacheStatus);
 
+                        // Store backend extraction data
+                        dispatch({ type: 'SET_BACKEND_EXTRACTION_DATA', payload: {
+                            framework: apiResponse.data.framework,
+                            assets: apiResponse.data.assets,
+                            componentAnalysis: apiResponse.data.componentAnalysis,
+                            cacheStatus: apiResponse.metadata.cacheStatus,
+                            executionTime: apiResponse.metadata.executionTime
+                        }});
+
                         dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
                             id: apiResponse.data.reconResult.id,
                             type: 'Recon',
@@ -1009,7 +1023,14 @@ function App() {
                  {(showOnlyCurrentSession ? currentSession.activeResults : sessionHistory).map(entry => {
                     let content = null;
                     if (entry.type === 'Recon' && reconResult && reconResult.id === entry.id) {
-                        content = <ReconCard result={reconResult} onComponentSelect={handleComponentSelect} onApplyTheme={handleApplyTheme} />;
+                        content = (
+                            <>
+                                <ReconCard result={reconResult} onComponentSelect={handleComponentSelect} onApplyTheme={handleApplyTheme} />
+                                {backendExtractionData && (
+                                    <BackendExtractionPanel backendData={backendExtractionData} />
+                                )}
+                            </>
+                        );
                     } else if (entry.type === 'heist' && deepDiveResults[entry.id]) {
                         content = <ResultCard result={deepDiveResults[entry.id]} onTechTagClick={() => {}} onQuickHeist={handleQuickHeist} onOpenSafehouse={(result) => dispatch({ type: 'OPEN_SAFEHOUSE', payload: result })} />;
                     } else if (entry.type === 'refactor' && refactorResults[entry.id]) {
