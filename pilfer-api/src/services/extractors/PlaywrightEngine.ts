@@ -20,6 +20,7 @@ import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import { FrameworkDetector } from '../detectors/FrameworkDetector';
+import { AssetHarvester } from '../harvesters/AssetHarvester';
 import type {
   ExtractionEngine,
   ExtractionRequest,
@@ -34,7 +35,8 @@ import type {
   ComponentNode,
   NetworkRequest,
   ConsoleMessage,
-  FrameworkDetectionResult
+  FrameworkDetectionResult,
+  AssetCatalog
 } from '../../types';
 
 /**
@@ -117,11 +119,13 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
   private browser: Browser | null = null;
   private contextPool: BrowserContextPool;
   private frameworkDetector: FrameworkDetector;
+  private assetHarvester: AssetHarvester;
   private isInitialized = false;
 
   constructor() {
     this.contextPool = new BrowserContextPool();
     this.frameworkDetector = new FrameworkDetector();
+    this.assetHarvester = new AssetHarvester();
   }
 
   /**
@@ -184,16 +188,20 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
         logger.info('Extracting page data...');
         const html = await page.content();
 
-        const [reconResult, frameworkDetection] = await Promise.all([
+        const [reconResult, frameworkDetection, assets] = await Promise.all([
           this.extractReconResult(page, request),
-          this.frameworkDetector.detect(page, html)
+          this.frameworkDetector.detect(page, html),
+          request.options.extractAssets
+            ? this.assetHarvester.harvest(page, request.url)
+            : Promise.resolve(null)
         ]);
 
         const executionTime = Date.now() - startTime;
 
         logger.info(`Extraction completed in ${executionTime}ms`, {
           framework: frameworkDetection.primaryFramework.name,
-          confidence: frameworkDetection.primaryFramework.confidence
+          confidence: frameworkDetection.primaryFramework.confidence,
+          assetsExtracted: assets ? assets.metadata.totalAssets : 0
         });
 
         return {
@@ -208,6 +216,7 @@ export class PlaywrightExtractionEngine implements ExtractionEngine {
           html,
           htmlContent: html,
           framework: frameworkDetection,
+          assets: assets || undefined,
           networkTraffic: networkMonitor.getRequests(),
           consoleMessages: consoleMonitor.getMessages(),
           success: true

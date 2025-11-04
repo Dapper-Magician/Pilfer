@@ -230,21 +230,28 @@ export interface FrameworkDetectionResult {
 
 export interface ImageAsset {
   url: string;
-  format: string;
-  dimensions?: { width: number; height: number };
+  type: 'raster' | 'vector' | 'icon' | 'background';
+  alt: string;
+  dimensions: {
+    width: number;
+    height: number;
+    aspectRatio: string;
+  };
   size: string;
-  usage: string[];
+  format: string;
+  loading?: 'lazy' | 'eager';
   optimization: {
-    compressed: boolean;
-    format: 'original' | 'webp' | 'avif' | 'optimized';
     responsive: boolean;
     lazyLoaded: boolean;
-    score: number;
+    cdnHosted: boolean;
+    format: string;
+    recommendations: string[];
   };
 }
 
 export interface FontAsset {
   family: string;
+  url: string;
   variants: {
     weight: string;
     style: 'normal' | 'italic';
@@ -260,21 +267,64 @@ export interface FontAsset {
   };
 }
 
+export interface StylesheetAsset {
+  url: string;
+  type: 'external' | 'inline';
+  size: string;
+  external: boolean;
+  media: string;
+  critical: boolean;
+  async: boolean;
+  optimization: {
+    minified: boolean;
+    cached: boolean;
+    cdnHosted: boolean;
+    recommendations: string[];
+  };
+}
+
+export interface ScriptAsset {
+  url: string;
+  type: 'external' | 'inline';
+  size: string;
+  async: boolean;
+  defer: boolean;
+  module: boolean;
+  external: boolean;
+  optimization: {
+    minified: boolean;
+    bundled: boolean;
+    cdnHosted: boolean;
+    recommendations: string[];
+  };
+}
+
+export interface MediaAsset {
+  url: string;
+  type: 'video' | 'audio';
+  format: string;
+  size: string;
+  duration: number;
+  autoplay: boolean;
+  optimization: {
+    lazy: boolean;
+    streaming: boolean;
+    cdnHosted: boolean;
+    recommendations: string[];
+  };
+}
+
 export interface AssetCatalog {
   images: ImageAsset[];
   fonts: FontAsset[];
-  stylesheets: {
-    url: string;
-    size: string;
-    external: boolean;
-  }[];
-  scripts: {
-    url: string;
-    size: string;
-    async: boolean;
-    defer: boolean;
-    module: boolean;
-  }[];
+  stylesheets: StylesheetAsset[];
+  scripts: ScriptAsset[];
+  media: MediaAsset[];
+  metadata: {
+    totalAssets: number;
+    harvestTime: number;
+    baseUrl: string;
+  };
 }
 
 // ============================================================================
