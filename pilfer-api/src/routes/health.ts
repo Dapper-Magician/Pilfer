@@ -7,8 +7,12 @@
 import { Router, Request, Response } from 'express';
 import { HealthCheckResponse, EngineType } from '../types';
 import { logger } from '../utils/logger';
+import { ExtractionOrchestrator } from '../services/orchestrator/ExtractionOrchestrator';
 
 const router = Router();
+
+// Initialize orchestrator (singleton)
+const orchestrator = new ExtractionOrchestrator();
 
 /**
  * GET /api/v1/health
@@ -21,19 +25,8 @@ router.get('/', async (req: Request, res: Response) => {
     // Calculate uptime
     const uptime = process.uptime();
 
-    // TODO: Implement actual engine health checks
-    const engines = {
-      [EngineType.PLAYWRIGHT]: {
-        healthy: true,
-        issues: [],
-        performance: {
-          responseTime: 0,
-          successRate: 1.0,
-          resourceUsage: 0.1
-        },
-        lastCheck: Date.now()
-      }
-    };
+    // Get engine health from orchestrator
+    const engines = await orchestrator.getEngineHealth();
 
     // TODO: Implement actual dependency health checks
     const dependencies = {

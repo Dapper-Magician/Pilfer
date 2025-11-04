@@ -8,8 +8,12 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { ExtractionRequest, ExtractionResult, APIResponse } from '../types';
 import { logger } from '../utils/logger';
+import { ExtractionOrchestrator } from '../services/orchestrator/ExtractionOrchestrator';
 
 const router = Router();
+
+// Initialize orchestrator (singleton)
+const orchestrator = new ExtractionOrchestrator();
 
 /**
  * Request validation schema using Zod
@@ -71,31 +75,40 @@ router.post('/', async (req: Request, res: Response) => {
       options
     });
 
-    // TODO: Implement extraction orchestrator
-    // For now, return a placeholder response
-    const mockResult: ExtractionResult = {
-      requestId,
-      engineType: 'playwright' as any,
-      timestamp: Date.now(),
-      executionTime: 0,
-      confidence: 0,
+    // Build extraction request
+    const extractionRequest: ExtractionRequest = {
       url,
-      success: false,
-      extractionMetadata: {
-        error: 'Extraction engine not yet implemented',
-        errorType: 'NOT_IMPLEMENTED'
+      sessionId: `session-${Date.now()}`,
+      requestId,
+      mode: 'balanced',
+      options: {
+        preferredEngine: options.preferredEngine,
+        timeout: options.timeout || 30000,
+        enableJavaScript: options.enableJavaScript !== false,
+        captureScreenshots: options.captureScreenshots || false,
+        analyzePerformance: options.analyzePerformance || false,
+        extractAssets: options.extractAssets !== false,
+        analysisDepth: options.analysisDepth || 'moderate',
+        waitUntil: options.waitUntil || 'networkidle',
+        scrollToLoad: options.scrollToLoad || false
+      },
+      context: {
+        persona: context.persona,
+        targetFramework: context.targetFramework,
+        targetStyling: context.targetStyling
       }
     };
 
+    // Execute extraction with orchestrator
+    const result = await orchestrator.extract(extractionRequest);
+
     const response: APIResponse<ExtractionResult> = {
-      success: false,
-      error: {
-        code: 'NOT_IMPLEMENTED',
-        message: 'Extraction engine implementation in progress',
-        details: {
-          message: 'The Playwright extraction engine is being implemented. This is a placeholder response.',
-          estimatedCompletion: 'Next development phase'
-        }
+      success: result.success,
+      data: result.success ? result : undefined,
+      error: result.success ? undefined : {
+        code: 'EXTRACTION_FAILED',
+        message: result.extractionMetadata?.error || 'Extraction failed',
+        details: result.extractionMetadata
       },
       metadata: {
         requestId,
@@ -105,7 +118,8 @@ router.post('/', async (req: Request, res: Response) => {
       }
     };
 
-    res.status(501).json(response);
+    const statusCode = result.success ? 200 : 500;
+    res.status(statusCode).json(response);
 
   } catch (error) {
     logger.error('Extraction request failed:', {

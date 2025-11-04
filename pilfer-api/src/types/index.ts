@@ -451,6 +451,54 @@ export interface CircuitBreakerConfig {
 }
 
 // ============================================================================
+// FRAMEWORK DETECTION
+// ============================================================================
+
+export interface FrameworkDetectionResult {
+  primaryFramework: DetectedFramework;
+  detectedFrameworks: DetectedFramework[];
+  stateManagement: StateManagementPattern[];
+  routing: RoutingPattern | null;
+  buildTool: BuildToolPattern | null;
+  metadata: {
+    detectionLayers: number;
+    executionTime: number;
+    signalCount: number;
+  };
+}
+
+export interface DetectedFramework {
+  name: string;
+  version: string;
+  confidence: number;
+  signals: {
+    static: number;
+    bundle: number;
+    runtime: number;
+    dom: number;
+    behavioral: number;
+  };
+}
+
+export interface StateManagementPattern {
+  type: 'redux' | 'mobx' | 'vuex' | 'pinia' | 'context-api' | 'zustand' | 'recoil' | 'jotai' | 'other';
+  confidence: number;
+  signals: string[];
+}
+
+export interface RoutingPattern {
+  type: 'react-router' | 'nextjs-router' | 'vue-router' | 'nuxt-router' | 'angular-router' | 'svelte-routing' | 'other';
+  mode: 'hash' | 'history' | 'filesystem';
+  confidence: number;
+}
+
+export interface BuildToolPattern {
+  type: 'webpack' | 'vite' | 'parcel' | 'rollup' | 'esbuild' | 'turbopack' | 'other';
+  confidence: number;
+  signals: string[];
+}
+
+// ============================================================================
 // CACHE
 // ============================================================================
 
