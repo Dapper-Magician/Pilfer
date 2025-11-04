@@ -70,24 +70,30 @@ export const playwrightConfig: PlaywrightConfig = {
  * Redis Configuration
  */
 export const redisConfig: RedisConfig = {
+  enabled: process.env.REDIS_ENABLED !== 'false',
+  url: process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`,
   host: process.env.REDIS_HOST || 'localhost',
   port: parseInt(process.env.REDIS_PORT || '6379', 10),
   password: process.env.REDIS_PASSWORD,
   db: parseInt(process.env.REDIS_DB || '0', 10),
-  keyPrefix: process.env.REDIS_KEY_PREFIX || 'pilfer:'
+  keyPrefix: process.env.REDIS_KEY_PREFIX || 'pilfer:',
+  ttl: parseInt(process.env.REDIS_TTL || '3600', 10) // 1 hour default
 };
 
 /**
  * PostgreSQL Configuration
  */
 export const postgresConfig: PostgresConfig = {
+  enabled: process.env.POSTGRES_ENABLED !== 'false',
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
   database: process.env.POSTGRES_DB || 'pilfer',
   user: process.env.POSTGRES_USER || 'pilfer',
   password: process.env.POSTGRES_PASSWORD || 'pilfer',
   ssl: process.env.POSTGRES_SSL === 'true',
-  poolSize: parseInt(process.env.POSTGRES_POOL_SIZE || '10', 10)
+  poolSize: parseInt(process.env.POSTGRES_POOL_SIZE || '10', 10),
+  maxConnections: parseInt(process.env.POSTGRES_MAX_CONNECTIONS || '20', 10),
+  ttl: parseInt(process.env.POSTGRES_TTL || '86400', 10) // 24 hours default
 };
 
 /**

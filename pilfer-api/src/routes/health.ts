@@ -8,11 +8,18 @@ import { Router, Request, Response } from 'express';
 import { HealthCheckResponse, EngineType } from '../types';
 import { logger } from '../utils/logger';
 import { ExtractionOrchestrator } from '../services/orchestrator/ExtractionOrchestrator';
+import { CacheService } from '../services/cache/CacheService';
 
 const router = Router();
 
-// Initialize orchestrator (singleton)
+// Initialize services (singletons)
 const orchestrator = new ExtractionOrchestrator();
+const cacheService = new CacheService();
+
+// Initialize cache service on module load
+cacheService.initialize().catch(err => {
+  logger.error('Cache service initialization failed:', err);
+});
 
 /**
  * GET /api/v1/health
@@ -47,6 +54,9 @@ router.get('/', async (req: Request, res: Response) => {
       }
     };
 
+    // Get cache statistics
+    const cacheStats = cacheService.getStats();
+
     // Determine overall health status
     const allHealthy = Object.values(engines).every(e => e.healthy) &&
                       Object.values(dependencies).every(d => d.healthy);
@@ -56,7 +66,8 @@ router.get('/', async (req: Request, res: Response) => {
       version: '1.0.0',
       uptime,
       engines,
-      dependencies
+      dependencies,
+      cache: cacheStats
     };
 
     const executionTime = Date.now() - startTime;

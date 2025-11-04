@@ -693,6 +693,11 @@ export interface HealthCheckResponse {
     postgres: ServiceHealthStatus;
     gemini: ServiceHealthStatus;
   };
+  cache?: {
+    hits: number;
+    misses: number;
+    hitRate: number;
+  };
 }
 
 export interface ServiceHealthStatus {
@@ -736,14 +741,18 @@ export interface PlaywrightConfig {
 }
 
 export interface RedisConfig {
+  enabled: boolean;
+  url: string;
   host: string;
   port: number;
   password?: string;
   db: number;
   keyPrefix: string;
+  ttl: number;
 }
 
 export interface PostgresConfig {
+  enabled: boolean;
   host: string;
   port: number;
   database: string;
@@ -751,4 +760,6 @@ export interface PostgresConfig {
   password: string;
   ssl: boolean;
   poolSize: number;
+  maxConnections: number;
+  ttl: number;
 }
