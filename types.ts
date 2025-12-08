@@ -20,7 +20,7 @@ export interface TypographyInfo { fontFamily: string; usage: string; }
 export interface CoreStyleInfo { name: string; code: string; }
 export interface ComponentNode { name: string; children?: ComponentNode[]; }
 
-export interface ReconResult { id: string; colorPalette: ColorInfo[]; typography: TypographyInfo[]; coreStyles: CoreStyleInfo[]; pageArchitecture: ComponentNode[]; }
+export interface ReconResult { id: string; colorPalette: ColorInfo[]; typography: TypographyInfo[]; coreStyles: CoreStyleInfo[]; pageArchitecture: ComponentNode[]; assets?: AssetIntelligence; }
 export interface PilferResult { id:string; name: string; techStack: string[]; architecturalNotes: string; code: string; rationale: string; tags: string[]; }
 export interface RefactorResult { id: string; name: string; explanation: string; refactoredCode: string; tags: string[]; }
 export interface ComparativeResult { id: string; summary: string; subject1: { title: string; notes: string; }, subject2: { title: string; notes: string; } }
@@ -330,6 +330,7 @@ export type StateTarget = 'hooks' | 'redux' | 'vuex' | 'svelte_stores' | 'none';
 export type Persona = 'ghost' | 'professor' | 'cleaner';
 export type Theme = 'default' | 'matrix-green' | 'arcade-neon';
 export type Layout = 'default' | 'compact';
+export type ExportFormat = 'markdown' | 'json' | 'html' | 'tailwind';
 
 export interface AppState {
     appState: AppStatus;
@@ -360,6 +361,7 @@ export interface AppState {
     stylingTarget: StylingTarget;
     stateTarget: StateTarget;
     persona: Persona;
+    useCoT: boolean;
     error: string | null;
     chat: Chat | null;
     chatHistory: any[];
@@ -400,5 +402,6 @@ export type AppAction =
     | { type: 'CLEAR_CURRENT_SESSION' }
     | { type: 'ARCHIVE_CURRENT_SESSION' }
     | { type: 'RESTORE_HISTORICAL_SESSION'; payload: string } // sessionId
+    | { type: 'TOGGLE_SESSION_VIEW' }
     | { type: 'TOGGLE_SESSION_VIEW' }
     | { type: 'DELETE_HISTORICAL_SESSION'; payload: string }; // sessionId

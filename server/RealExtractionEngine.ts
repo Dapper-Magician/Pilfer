@@ -15,8 +15,8 @@ import {
     ArchitecturalPattern,
     TechnicalDebt,
     SecurityVector
-} from './interfaces';
-import { ReconResult, PilferResult, ComponentNode, ComponentDNA, AssetIntelligence } from '../../types';
+} from '../src/extraction/interfaces';
+import { ReconResult, PilferResult, ComponentNode, ComponentDNA, AssetIntelligence } from '../types';
 
 /**
  * PROFESSIONAL-GRADE REAL EXTRACTION ENGINE

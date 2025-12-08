@@ -3,7 +3,7 @@ import mermaid from 'mermaid';
 import {
     ColorInfo, ComponentNode, ReconResult, PilferResult, RefactorResult,
     ComparativeResult, BlueprintResult, UnitTestResult, LiveResult, HistoryEntry,
-    Theme, Layout
+    Theme, Layout, ExportFormat
 } from './types';
 
 mermaid.initialize({ startOnLoad: false, theme: 'dark', 'themeVariables': { 'background': '#0d0d1a' } });
@@ -64,6 +64,8 @@ export function ComponentTreeView({ tree, onNodeClick }: { tree: ComponentNode[]
     );
 }
 
+
+
 export function ReconCard({ result, onComponentSelect, onApplyTheme }: { result: ReconResult, onComponentSelect: (componentName: string) => void, onApplyTheme: (palette: ColorInfo[]) => void }) {
     return (
         <div id="recon-result" className="recon-card">
@@ -112,17 +114,38 @@ export function ReconCard({ result, onComponentSelect, onApplyTheme }: { result:
 }
 
 
-export function ResultCard({ result, onTechTagClick, onQuickHeist, onOpenSafehouse }: { 
+function ExportDropdown({ onExport }: { onExport: (format: ExportFormat) => void }) {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+        <div className="export-dropdown" onMouseLeave={() => setIsOpen(false)}>
+            <button className="export-btn" onClick={() => setIsOpen(!isOpen)}>Export ▾</button>
+            {isOpen && (
+                <div className="export-menu">
+                    <button onClick={() => { onExport('markdown'); setIsOpen(false); }}>Markdown</button>
+                    <button onClick={() => { onExport('json'); setIsOpen(false); }}>JSON</button>
+                    <button onClick={() => { onExport('html'); setIsOpen(false); }}>HTML</button>
+                    <button onClick={() => { onExport('tailwind'); setIsOpen(false); }}>Tailwind (Code)</button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+export function ResultCard({ result, onTechTagClick, onQuickHeist, onOpenSafehouse, onExport }: { 
     result: PilferResult, 
     onTechTagClick: (tech: string) => void, 
     onQuickHeist: (tech: string) => void,
-    onOpenSafehouse: (result: PilferResult) => void 
+    onOpenSafehouse: (result: PilferResult) => void,
+    onExport: (result: PilferResult, format: ExportFormat) => void
 }) {
     const isRunnable = result.techStack.some(t => ['react', 'vue', 'svelte', 'web_component', 'plain_js'].includes(t.toLowerCase().replace(/ /g, '_')));
     
     return (
         <div className="result-card">
-            <h3>The Loot: {result.name}</h3>
+            <div className="card-header-row">
+                <h3>The Loot: {result.name}</h3>
+                <ExportDropdown onExport={(format) => onExport(result, format)} />
+            </div>
             <div className="tech-stack">
                 {result.techStack.map(tech => (
                     <div key={tech} className="tech-item-wrapper">
@@ -531,11 +554,12 @@ export function SettingsPanel({ isOpen, onClose, theme, setTheme, fontSize, setF
     );
 }
 
-export function SafehouseModal({ isOpen, onClose, component, onGenerateTests }: {
+export function SafehouseModal({ isOpen, onClose, component, onGenerateTests, onExport }: {
     isOpen: boolean;
     onClose: () => void;
     component: PilferResult | null;
     onGenerateTests: (code: string) => Promise<UnitTestResult | null>;
+    onExport: (result: PilferResult, format: ExportFormat) => void;
 }) {
     const [editedCode, setEditedCode] = useState('');
     const [testResult, setTestResult] = useState<UnitTestResult | null>(null);
@@ -672,7 +696,10 @@ export function SafehouseModal({ isOpen, onClose, component, onGenerateTests }: 
             <div className="safehouse-modal" onClick={e => e.stopPropagation()}>
                 <div className="safehouse-header">
                     <h3>Safehouse: Testing "{component.name}"</h3>
-                    <button onClick={onClose} className="safehouse-close-btn">&times;</button>
+                    <div className="safehouse-actions">
+                        <ExportDropdown onExport={(format) => onExport(component, format)} />
+                        <button onClick={onClose} className="safehouse-close-btn">&times;</button>
+                    </div>
                 </div>
                 <div className="safehouse-content">
                     <div className="safehouse-pane editor-pane">

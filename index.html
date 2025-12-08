@@ -1085,24 +1085,85 @@
       color: var(--error-color);
       padding: 0.75rem 1.5rem;
     }
-     .heist-plan-actions .cancel-btn:hover:not(:disabled) {
+    .heist-plan-actions .cancel-btn:hover:not(:disabled) {
       background: var(--error-color);
       color: var(--background-color);
       box-shadow: 0 0 15px var(--error-color);
     }
 
+    /* Layout Fixes & Batch Progress */
+    .main-interface {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        gap: 2rem;
+    }
+
+    .session-controls {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .session-info {
+        font-size: 0.9rem;
+        color: var(--accent-cyan);
+        white-space: nowrap;
+    }
+
+    .new-session-btn, .clear-session-btn {
+        width: auto !important;
+        font-size: 0.9rem !important;
+        padding: 0.5rem 1rem !important;
+    }
+
+    .batch-progress-bar {
+        background: rgba(0, 20, 40, 0.8);
+        border: 1px solid var(--accent-magenta);
+        border-radius: 8px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--accent-magenta);
+        box-shadow: 0 0 15px rgba(255, 0, 255, 0.2);
+        animation: pulse-border 2s infinite;
+    }
+
+    .batch-status {
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .batch-count {
+        background: var(--accent-magenta);
+        color: var(--background-color);
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.9rem;
+    }
+
+    .batch-queue-preview {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.85rem;
+        color: var(--primary-text);
+        opacity: 0.8;
+    }
+
+    @keyframes pulse-border {
+        0% { border-color: var(--accent-magenta); }
+        50% { border-color: var(--accent-cyan); }
+        100% { border-color: var(--accent-magenta); }
+    }
+
+
   </style>
-<script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.15.0",
-    "react": "https://aistudiocdn.com/react@^19.1.1",
-    "react/": "https://aistudiocdn.com/react@^19.1.1/",
-    "mermaid": "https://aistudiocdn.com/mermaid@^11.10.1"
-  }
-}
-</script>
+
 <link rel="stylesheet" href="/index.css">
 </head>
 <body>

@@ -7,12 +7,15 @@ import {
     ReconResult, PilferResult, RefactorResult, ComparativeResult, BlueprintResult,
     UnitTestResult, LiveResult, AppState, AuditType, FrameworkTarget,
     StylingTarget, StateTarget, Persona, AppAction, Chat, ColorInfo,
-    SessionWorkspace, HistoricalSession
+    SessionWorkspace, HistoricalSession, ExportFormat
 } from './types';
 import {
     ReconCard, ResultCard, RefactorResultCard, ComparativeResultCard, BlueprintResultCard,
     StreamingResultCard, HistoryPanel, CommandPalette, SettingsPanel, SafehouseModal
 } from './components';
+import { retryWithBackoff } from './src/utils/retry';
+import { PilferError, useErrorHandler } from './src/hooks/useErrorHandler';
+import { ExportService } from './src/services/ExportService';
 
 
 // --- HELPERS ---
@@ -52,6 +55,17 @@ function extractAndParseJson<T>(text: string): T {
         throw new Error("The AI response was not in a valid JSON format, even after extraction.");
     }
 }
+    const checkRelayHealth = async () => {
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 1000);
+            const res = await fetch('http://localhost:3000/health', { signal: controller.signal });
+            clearTimeout(id);
+            return res.ok;
+        } catch (e) {
+            return false;
+        }
+    };
 
 
 // --- AI & API CONFIG ---
@@ -62,13 +76,13 @@ const MODEL_CONFIG = {
     fast: 'gemini-2.5-flash',  // For quick operations and iterative refinements
     pro: 'gemini-2.5-pro',      // For complex analysis and high-quality output
     tokenLimits: {
-        recon: 4096,        // Reconnaissance needs comprehensive output
-        heist: 8192,        // Component extraction needs full code
-        refactor: 8192,     // Refactoring needs complete code
-        blueprint: 2048,    // Diagrams are relatively compact
-        compare: 4096,      // Comparative analysis needs moderate detail
-        unitTest: 4096,     // Test generation needs full test suites
-        plan: 2048          // Planning is concise text
+        recon: 8192,        // Increased for comprehensive recon
+        heist: 16384,       // Increased for full component code extraction
+        refactor: 16384,    // Increased for robust refactoring
+        blueprint: 4096,    // Diagrams need moderate space
+        compare: 8192,      // Comparative analysis needs context
+        unitTest: 8192,     // Test suites can be long
+        plan: 4096          // Planning needs detail
     }
 };
 
@@ -134,6 +148,7 @@ const initialState: AppState = {
     stylingTarget: 'tailwind',
     stateTarget: 'hooks',
     persona: 'professor',
+    useCoT: true, // Chain of Thought toggle
     error: null,
     chat: null,
     chatHistory: [],
@@ -351,38 +366,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
 }
 
 // --- ASYNC HELPERS ---
-async function retryWithBackoff<T>(
-    fn: () => Promise<T>,
-    retries = RETRY_CONFIG.maxRetries,
-    delay = RETRY_CONFIG.initialDelay
-): Promise<T> {
-    try {
-        return await fn();
-    } catch (error: any) {
-        if (retries === 0) {
-            throw error;
-        }
-        
-        // Check if error is retryable
-        const isRetryable = 
-            error.message?.includes('429') || // Rate limit
-            error.message?.includes('500') || // Server error
-            error.message?.includes('502') || // Bad gateway
-            error.message?.includes('503') || // Service unavailable
-            error.message?.includes('timeout') ||
-            error.message?.includes('network');
-        
-        if (!isRetryable) {
-            throw error;
-        }
-        
-        console.log(`Retrying after ${delay}ms... (${retries} retries left)`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        const nextDelay = Math.min(delay * RETRY_CONFIG.backoffFactor, RETRY_CONFIG.maxDelay);
-        return retryWithBackoff(fn, retries - 1, nextDelay);
-    }
-}
+
 
 async function streamAndProcess<T>(
     prompt: string,
@@ -391,6 +375,7 @@ async function streamAndProcess<T>(
     title: string,
     chat: Chat,
     dispatch: React.Dispatch<AppAction>,
+    onError: (error: unknown, severity?: PilferError['severity']) => void,
     useProModel: boolean = false
 ): Promise<(T & { id: string }) | null> {
     // Generate more unique ID with timestamp and random component to prevent duplicates
@@ -437,20 +422,7 @@ async function streamAndProcess<T>(
 
     } catch (e: any) {
         console.error('AI Operation Failed:', e);
-        
-        // Provide more helpful error messages
-        let errorMessage = 'Operation Failed: ';
-        if (e.message?.includes('429')) {
-            errorMessage += 'Rate limit exceeded. Please wait a moment and try again.';
-        } else if (e.message?.includes('401') || e.message?.includes('403')) {
-            errorMessage += 'API key issue. Please check your Gemini API key.';
-        } else if (e.message?.includes('parse')) {
-            errorMessage += 'The AI response was not in the expected format. Please try again.';
-        } else {
-            errorMessage += e.message || 'Unknown error occurred.';
-        }
-        
-        dispatch({ type: 'SET_ERROR', payload: errorMessage });
+        onError(e);
         return null;
     } finally {
         dispatch({ type: 'STREAM_END' });
@@ -465,9 +437,10 @@ function App() {
         sessionHistory, theme, fontSize, layout, directive, pageSource, code, apiDocs, compareCode1, compareCode2,
         compareDirective, analysisMode, auditType, frameworkTarget, stylingTarget, stateTarget, persona,
         error, chat, isHistoryOpen, isCommandPaletteOpen, isSettingsOpen, safehouseState, liveResult, heistPlan,
-        currentSession, historicalSessions, showOnlyCurrentSession
+        currentSession, historicalSessions, showOnlyCurrentSession, useCoT
     } = state;
 
+    const { error: hookError, handleError, clearError } = useErrorHandler();
     const [planRefinement, setPlanRefinement] = useState('');
 
     // --- EFFECTS ---
@@ -526,6 +499,11 @@ function App() {
     }, [isCommandPaletteOpen]);
 
 
+
+
+
+
+
     // --- HANDLERS ---
     const setField = (field: keyof AppState, value: any) => dispatch({ type: 'SET_FIELD', payload: { field, value } });
 
@@ -572,9 +550,9 @@ function App() {
     }
     
     const getPersonaInstruction = () => ({
-        ghost: "Be extremely concise. Provide code that is minimal and self-explanatory. Omit lengthy explanations unless absolutely necessary.",
-        professor: "Be a teacher. Explain the 'why' behind your analysis and code. Use comments to clarify complex parts. Your goal is to educate the user.",
-        cleaner: "Be a production expert. The code you provide must be robust, performant, and include error handling. Add professional documentation like JSDoc comments.",
+        ghost: "You are 'The Ghost'. Stealthy, precise, and minimal. Your code is highly optimized, modern, and stripped of anything unnecessary. You prefer functional patterns and immutable state. Do not explain unless asked, just deliver the raw, efficient code.",
+        professor: "You are 'The Professor'. You are here to educate. Every architectural choice you make must be explained. Use detailed comments to break down complex logic. Focus on best practices, design patterns, and the 'why' behind the code. Your output should be a masterclass in software engineering.",
+        cleaner: "You are 'The Cleaner'. You fix messes. Your code is robust, production-ready, and defensive. You prioritize error handling, type safety (TypeScript), and performance. You meticulously document edge cases and use industry-standard practices. No shortcuts.",
     })[persona];
 
     const handleRecon = async () => {
@@ -585,75 +563,121 @@ function App() {
         const useRealExtraction = localStorage.getItem('pilferUseRealExtraction') === 'true';
         
         if (useRealExtraction && url && !pageSource) {
-            try {
-                // {SCD: Professional Browser Extraction Integration}
-                console.log('[Pilfer] Initiating browser-based real extraction...');
-                const browserEngine = new BrowserExtractionEngine();
-
-                // {VS: Ⓘ} Immutable extraction request configuration
-                const extractionRequest = {
-                    url,
-                    sessionId: `session-${Date.now()}`,
-                    requestId: `req-${Date.now()}`,
-                    mode: 'balanced' as const,
-                    options: {
-                        preferredEngine: 'real' as const,
-                        fallbackEngines: ['mock' as const],
-                        timeout: 30000,
-                        enableJavaScript: false, // Browser limitation
-                        captureScreenshots: false,
-                        analyzePerformance: false,
-                        extractAssets: true,
-                        generateInsights: false,
-                        analysisDepth: 'moderate' as const,
-                        confidenceThreshold: 0.7,
-                        enableCaching: true,
-                        cacheStrategy: 'conservative' as const
-                    },
-                    context: {
-                        persona,
-                        targetFramework: frameworkTarget,
-                        targetStyling: stylingTarget,
-                        previousExtractions: [],
-                        userInsights: [],
-                        aiEnhancementLevel: 'basic' as const
-                    },
-                    // {EH: ∇} Progress and error callbacks
-                    onProgress: (progress) => {
-                        console.log(`[Pilfer] Extraction progress: ${progress.phase} (${progress.percentage}%)`);
-                    },
-                    onError: (error) => {
-                        console.warn('[Pilfer] Extraction error:', error);
+            let relaySuccess = false;
+            
+            // Check for Local Relay first
+            const relayAvailable = await checkRelayHealth();
+            
+            if (relayAvailable) {
+                try {
+                    console.log('[Pilfer] 🟢 Local Relay detected. Delegating extraction...');
+                    
+                    const response = await fetch('http://localhost:3000/extract', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url,
+                            options: { timeout: 60000, extractAssets: true },
+                            context: { persona, targetFramework: frameworkTarget }
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const relayResult = await response.json();
+                        if (relayResult && relayResult.success && relayResult.reconResult) {
+                            console.log('[Pilfer] Relay extraction successful:', relayResult);
+                            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
+                                id: relayResult.reconResult.id,
+                                type: 'Recon',
+                                title: `Relay Extraction: ${url}`,
+                                timestamp: Date.now(),
+                                url
+                            }});
+                            dispatch({ type: 'SET_RECON_RESULT', payload: relayResult.reconResult });
+                             
+                            if (relayResult.confidence > 0.6) {
+                                dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
+                                return;
+                            }
+                            relaySuccess = true; // Partial success, but maybe fallback to AI?
+                        }
                     }
-                };
-
-                // {FS: Δ} Execute browser extraction with comprehensive error handling
-                const extractionResult = await browserEngine.extract(extractionRequest);
-
-                // {EH: ∇} Process successful extraction result
-                if (extractionResult && extractionResult.success && extractionResult.reconResult) {
-                    console.log('[Pilfer] Browser extraction successful:', extractionResult);
-                    dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
-                        id: extractionResult.reconResult.id,
-                        type: 'Recon',
-                        title: `Real Extraction: ${url}`,
-                        timestamp: Date.now(),
-                        url
-                    }});
-                    dispatch({ type: 'SET_RECON_RESULT', payload: extractionResult.reconResult });
-                    dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
-                    return;
-                } else {
-                    // {EH: ∇} Graceful degradation on extraction failure
-                    console.warn('[Pilfer] Browser extraction returned no results, falling back to AI analysis');
-                    dispatch({ type: 'SET_ERROR', payload: `Real extraction completed but found no analyzable content. Confidence: ${extractionResult.confidence || 0}` });
+                } catch (relayError) {
+                    console.warn('[Pilfer] Relay extraction failed despite health check:', relayError);
                 }
-            } catch (error) {
-                // {EH: ∇} Comprehensive error handling with user feedback
-                console.warn('[Pilfer] Browser extraction failed, falling back to AI-based reconnaissance:', error);
-                const errorMessage = error instanceof Error ? error.message : 'Unknown extraction error';
-                dispatch({ type: 'SET_ERROR', payload: `Real extraction failed: ${errorMessage}. Falling back to AI analysis.` });
-                // Continue to AI-based approach below
+            } else {
+                console.log('[Pilfer] 🔴 Local Relay unavailable. Falling back to Browser Engine.');
+            }
+            
+            if (!relaySuccess) {
+                // FALLBACK TO BROWSER ENGINE (Existing Logic)
+                try {
+                    console.log('[Pilfer] Initiating browser-based real extraction...');
+                    const browserEngine = new BrowserExtractionEngine();
+    
+                    const extractionRequest = {
+                        url,
+                        sessionId: `session-${Date.now()}`,
+                        requestId: `req-${Date.now()}`,
+                        mode: 'balanced' as const,
+                        options: {
+                            preferredEngine: 'real' as const,
+                            fallbackEngines: ['mock' as const],
+                            timeout: 30000,
+                            enableJavaScript: false,
+                            captureScreenshots: false,
+                            analyzePerformance: false,
+                            extractAssets: true,
+                            generateInsights: false,
+                            analysisDepth: 'moderate' as const,
+                            confidenceThreshold: 0.7,
+                            enableCaching: true,
+                            cacheStrategy: 'conservative' as const
+                        },
+                        context: {
+                            persona,
+                            targetFramework: frameworkTarget,
+                            targetStyling: stylingTarget,
+                            previousExtractions: [],
+                            userInsights: [],
+                            aiEnhancementLevel: 'basic' as const
+                        },
+                        onProgress: (progress: any) => console.log(`[Pilfer] Extraction progress: ${progress.phase} (${progress.percentage}%)`),
+                        onError: (error: any) => console.warn('[Pilfer] Extraction error:', error)
+                    };
+    
+                    // Add a race with a timeout in case extract hangs significantly
+                    const extractionPromise = browserEngine.extract(extractionRequest);
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Extraction timed out')), 35000));
+                    
+                    const extractionResult: any = await Promise.race([extractionPromise, timeoutPromise]);
+    
+                    if (extractionResult && extractionResult.success && extractionResult.reconResult) {
+                        console.log('[Pilfer] Browser extraction successful:', extractionResult);
+                        
+                        dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
+                            id: extractionResult.reconResult.id,
+                            type: 'Recon',
+                            title: `Real Extraction: ${url}`,
+                            timestamp: Date.now(),
+                            url
+                        }});
+                        
+                        dispatch({ type: 'SET_RECON_RESULT', payload: extractionResult.reconResult });
+                        
+                        // If high confidence, we are done. Stop here.
+                        if (extractionResult.confidence > 0.6) {
+                            dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
+                            return;
+                        }
+                        console.log('[Pilfer] Low confidence extraction, falling back to AI enhancement...');
+                    } else {
+                         console.warn('[Pilfer] Real extraction returned failure/empty, falling back to AI.');
+                    }
+                } catch (error) {
+                    console.warn('[Pilfer] Real extraction failed/timed out:', error);
+                    // Fall through to AI
+                }
             }
         }
         
@@ -668,7 +692,7 @@ function App() {
         **Reconnaissance Directive:** ${contextInstruction}
         Return your findings as a single JSON object. The 'pageArchitecture' property must be a stringified JSON array of component nodes.`;
         
-        const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: reconSchema }, 'Recon', `Recon: ${url}`, chat, dispatch);
+        const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: reconSchema }, 'Recon', `Recon: ${url}`, chat, dispatch, handleError);
         if (result) {
             const parsedResult: ReconResult = { ...result, pageArchitecture: JSON.parse(result.pageArchitecture || '[]') };
             dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {id: result.id, type: 'Recon', title: `Recon: ${url}`, timestamp: Date.now(), url} });
@@ -680,17 +704,31 @@ function App() {
         if (!chat) return;
         dispatch({ type: 'SET_APP_STATE', payload: 'PLANNING_HEIST' });
 
-        const planPrompt = `You are a world-class senior frontend engineer planning a "heist." Your goal is to create a concise, step-by-step plan to achieve the user's objective. Do NOT write any code. Just describe the approach in plain text.
+        // Construct context from Real Extraction if available
+        let extractionContext = "";
+        if (reconResult) {
+             extractionContext = `
+             **REAL EXTRACTION DATA AVAILABLE**
+             The user has performed a real browser extraction. Use this data as the Ground Truth.
+             - **Typography**: ${JSON.stringify(reconResult.typography)}
+             - **Colors**: ${JSON.stringify(reconResult.colorPalette)}
+             - **Assets**: ${JSON.stringify(reconResult.assets || {})} 
+             `;
+        }
+
+        const prompt = `You are a strategic mastermind planning a code heist...
         **Persona:** ${getPersonaInstruction()}
-        **Target Context:** URL: ${url}
-        ${reconResult ? `Recon Data:\n\`\`\`json\n${JSON.stringify({ colorPalette: reconResult.colorPalette, typography: reconResult.typography, coreStyles: reconResult.coreStyles }, null, 2)}\n\`\`\`` : ''}
-        **Heist Objective:** ${directive}
-        **Technical Specifications:** Framework: ${frameworkTarget}, Styling: ${stylingTarget}, State: ${stateTarget}
-        ${apiDocs ? `**Contextual Documentation:**\n\`\`\`\n${apiDocs}\n\`\`\`` : ''}
-        **Deliverables:** Respond with a plain-text, step-by-step plan for how you will build this component. For example: "1. Create a new React component. 2. Use useState for the dropdown state. 3. Use useEffect to handle outside clicks."`;
+        ${useCoT ? "**Strategy:** Think step-by-step. First, analyze the requirements. Second, identify the key technical challenges. Third, outline the solution." : ""}
+        **Target URL:** ${url}
+        **Framework Target:** ${frameworkTarget}
+        **Styling Target:** ${stylingTarget}
+        **State Management:** ${stateTarget}
+        **User Refinement:** ${planRefinement}
+        ${extractionContext}
+        **Deliverables:** Return a single JSON object.`;
 
         try {
-            const response = await chat.sendMessage({ message: planPrompt });
+            const response = await chat.sendMessage({ message: prompt });
             const planText = response.text || 'Unable to generate plan. Please try again.';
             dispatch({ type: 'SET_HEIST_PLAN', payload: { plan: planText, isAwaitingConfirmation: true } });
             dispatch({ type: 'SET_APP_STATE', payload: 'AWAITING_CONFIRMATION' });
@@ -708,9 +746,12 @@ function App() {
 
         const title = `Heist: ${directive.substring(0, 30)}...`;
         const userMessage = planRefinement || "That plan looks good. Proceed with the heist.";
-        const executionPrompt = `${userMessage}\n\nNow, execute the plan and provide the final code as a single JSON object. Your response MUST follow the required JSON schema. For React, the main component MUST be named \`PilferedComponent\`.`;
+        const executionPrompt = `${userMessage}
+        ${useCoT ? "**Reasoning Process:** Explain your implementation logic briefly before generating code." : ""}
+        
+        Now, execute the plan and provide the final code as a single JSON object. Your response MUST follow the required JSON schema. For React, the main component MUST be named \`PilferedComponent\`.`;
 
-        const result = await streamAndProcess<PilferResult>(executionPrompt, { responseMimeType: 'application/json', responseSchema: pilferSchema }, 'heist', title, chat, dispatch);
+        const result = await streamAndProcess<PilferResult>(executionPrompt, { responseMimeType: 'application/json', responseSchema: pilferSchema }, 'heist', title, chat, dispatch, handleError);
         
         if (result) {
             dispatch({ type: 'ADD_RESULT', payload: { id: result.id, type: 'heist', result } });
@@ -727,17 +768,23 @@ function App() {
         
         switch (currentAuditType) {
             case 'heist':
+                // Check if we have real extraction data to enhance the plan
+                if (reconResult && reconResult.pageArchitecture) {
+                    console.log('[Deep Dive] Enhancing heist plan with real extraction data');
+                    // We don't change the call, but handlePlanHeist should use reconResult which is already in scope
+                }
                 await handlePlanHeist();
                 break;
             case 'refactor': {
                 const title = `Refactor: ${directive.substring(0, 30)}...`;
                 const prompt = `You are an expert code reviewer...
                 **Persona:** ${getPersonaInstruction()}
+                ${useCoT ? "**Analysis:** First, analyze the existing code logic. Second, identify areas for improvement. Third, apply the refactoring patterns." : ""}
                 **Code to Refactor:** \`\`\`${code}\`\`\`
                 **Refactoring Directive:** ${directive}
                 ${apiDocs ? `**Contextual Documentation:**\n\`\`\`\n${apiDocs}\n\`\`\`` : ''}
                 **Deliverables:** Return a single JSON object with the refactored code and a clear explanation...`;
-                const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: refactorSchema }, currentAuditType, title, chat, dispatch);
+                const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: refactorSchema }, currentAuditType, title, chat, dispatch, handleError);
                 if (result) {
                     dispatch({ type: 'ADD_RESULT', payload: { id: result.id, type: currentAuditType, result } });
                 }
@@ -747,10 +794,11 @@ function App() {
                 const title = `Blueprint: ${directive.substring(0, 30)}...`;
                 const prompt = `You are a software architect...
                 **Persona:** ${getPersonaInstruction()}
+                ${useCoT ? "**Thought Process:** Step 1: Identify system components. Step 2: Define relationships. Step 3: Structure the diagram." : ""}
                 **Architectural Objective:** ${directive}
                  ${apiDocs ? `**Contextual Documentation:**\n\`\`\`\n${apiDocs}\n\`\`\`` : ''}
                 **Deliverables:** Return a single JSON object... a 'diagram' field containing ONLY the Mermaid.js graph syntax...`;
-                const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: blueprintSchema }, currentAuditType, title, chat, dispatch);
+                const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: blueprintSchema }, currentAuditType, title, chat, dispatch, handleError);
                 if (result) {
                     dispatch({ type: 'ADD_RESULT', payload: { id: result.id, type: currentAuditType, result } });
                 }
@@ -767,12 +815,13 @@ function App() {
         const title = `Compare: ${compareDirective.substring(0, 30)}...`;
         const prompt = `You are a principal engineer specializing in comparative code analysis...
         **Persona:** ${getPersonaInstruction()}
+        ${useCoT ? "**Methdology:** 1. Analyze Subject 1. 2. Analyze Subject 2. 3. Identify commonalities and critical differences. 4. Synthesize conclusion." : ""}
         **Comparison Directive:** ${compareDirective}
         **Subject 1:**\n\`\`\`\n${compareCode1}\n\`\`\`
         **Subject 2:**\n\`\`\`\n${compareCode2}\n\`\`\`
         **Deliverables:** Return a single JSON object.`;
         
-        const result = await streamAndProcess<ComparativeResult>(prompt, { responseMimeType: 'application/json', responseSchema: comparativeSchema }, 'Compare', title, chat, dispatch);
+        const result = await streamAndProcess<ComparativeResult>(prompt, { responseMimeType: 'application/json', responseSchema: comparativeSchema }, 'Compare', title, chat, dispatch, handleError);
         if (result) {
             dispatch({ type: 'ADD_RESULT', payload: { id: result.id, type: 'Compare', result } });
         }
@@ -812,7 +861,7 @@ function App() {
             } else {
                 errorMessage += e.message || 'Unknown error.';
             }
-            dispatch({ type: 'SET_ERROR', payload: errorMessage });
+            handleError(e);
             return null;
         }
     };
@@ -821,6 +870,15 @@ function App() {
         if (window.confirm("Are you sure you want to reset the entire session? This cannot be undone.")) {
             localStorage.removeItem('pilferSession');
             dispatch({ type: 'RESET_SESSION' });
+        }
+    };
+
+    const handleExport = (result: PilferResult, format: ExportFormat) => {
+        try {
+            ExportService.export(result, format);
+        } catch (e) {
+            console.error("Export failed:", e);
+            handleError(e);
         }
     };
 
@@ -840,17 +898,21 @@ function App() {
 
     return (
         <>
-            <h1>Pilfer</h1>
-            <div className="top-controls">
-                <div className="mode-toggle">
-                    <button className={analysisMode === 'single' ? 'active' : ''} onClick={() => setField('analysisMode', 'single')}>Single</button>
-                    <button className={analysisMode === 'compare' ? 'active' : ''} onClick={() => setField('analysisMode', 'compare')}>Compare</button>
-                </div>
-                <div className="utility-buttons">
-                    <button onClick={() => dispatch({type: 'TOGGLE_PANEL', payload: {panel: 'history', isOpen: true}})}>Logbook</button>
-                    <button onClick={() => dispatch({type: 'TOGGLE_PANEL', payload: {panel: 'command', isOpen: true}})}>Cmd (⌘K)</button>
-                    <button onClick={() => dispatch({type: 'TOGGLE_PANEL', payload: {panel: 'settings', isOpen: true}})}>Settings</button>
-                </div>
+            {/* --- MAIN UI --- */}
+            <h1 className="cyber-glitch" data-text="PILFER">PILFER</h1>
+            <p className="subtitle">Digital Heist Platform</p>
+
+            <div className={`main-interface ${appState !== 'IDLE' ? 'active-heist' : ''}`}>
+                <div className="top-controls">
+                    <div className="mode-toggle">
+                        <button className={analysisMode === 'single' ? 'active' : ''} onClick={() => setField('analysisMode', 'single')}>Single</button>
+                        <button className={analysisMode === 'compare' ? 'active' : ''} onClick={() => setField('analysisMode', 'compare')}>Compare</button>
+                    </div>
+                    <div className="utility-buttons">
+                        <button onClick={() => dispatch({ type: 'TOGGLE_PANEL', payload: { panel: 'history', isOpen: true } })}>Logbook</button>
+                        <button onClick={() => dispatch({ type: 'TOGGLE_PANEL', payload: { panel: 'command', isOpen: true } })}>Cmd (⌘K)</button>
+                        <button onClick={() => dispatch({ type: 'TOGGLE_PANEL', payload: { panel: 'settings', isOpen: true } })}>Settings</button>
+                    </div>
                 <div className="session-controls">
                     <button 
                         className="new-session-btn" 
@@ -872,6 +934,7 @@ function App() {
                         {historicalSessions.length > 0 && ` | ${historicalSessions.length} archived`}
                     </span>
                 </div>
+            </div>
             </div>
 
             <div className={`main-content ${appState === 'HEISTING' ? 'heisting' : ''}`}>
@@ -901,7 +964,7 @@ function App() {
                 <div className={`input-form ${isFormDisabled ? 'disabled' : ''}`}>
                     {analysisMode === 'single' ? (
                         <>
-                            <div className="form-group"><label htmlFor="url">Target URL</label><input type="text" id="url" value={url} onChange={e => setField('url', e.target.value)} placeholder="https://example.com" /></div>
+                            <div className="form-group"><label htmlFor="url">Target URL</label><input type="text" id="url" value={url} onChange={e => setField('url', e.target.value)} placeholder="https://example.com, https://another.com" /></div>
                             <div className="form-group"><label htmlFor="pageSource">Page Source (HTML - Optional)</label><textarea id="pageSource" value={pageSource} onChange={e => setField('pageSource', e.target.value)} placeholder="Paste HTML source for high-fidelity recon..." /></div>
                             <button onClick={handleRecon} disabled={!url || isFormDisabled}>{appState === 'CASING' ? 'Casing...' : 'Case The Joint'}</button>
                             
@@ -955,7 +1018,7 @@ function App() {
                     if (entry.type === 'Recon' && reconResult && reconResult.id === entry.id) {
                         content = <ReconCard result={reconResult} onComponentSelect={handleComponentSelect} onApplyTheme={handleApplyTheme} />;
                     } else if (entry.type === 'heist' && deepDiveResults[entry.id]) {
-                        content = <ResultCard result={deepDiveResults[entry.id]} onTechTagClick={() => {}} onQuickHeist={handleQuickHeist} onOpenSafehouse={(result) => dispatch({ type: 'OPEN_SAFEHOUSE', payload: result })} />;
+                        content = <ResultCard result={deepDiveResults[entry.id]} onTechTagClick={() => {}} onQuickHeist={handleQuickHeist} onOpenSafehouse={(result) => dispatch({ type: 'OPEN_SAFEHOUSE', payload: result })} onExport={handleExport} />;
                     } else if (entry.type === 'refactor' && refactorResults[entry.id]) {
                         content = <RefactorResultCard result={refactorResults[entry.id]} />;
                     } else if (entry.type === 'Compare' && comparativeResults[entry.id]) {
@@ -1012,6 +1075,7 @@ function App() {
                 onClose={() => dispatch({ type: 'CLOSE_SAFEHOUSE' })}
                 component={safehouseState.component}
                 onGenerateTests={handleGenerateTests}
+                onExport={handleExport}
             />
         </>
     );

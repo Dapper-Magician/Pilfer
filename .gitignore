@@ -43,3 +43,12 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# Project documentation and reports (exclude from repository)
+PILFER_COMPREHENSIVE_REVIEW.md
+PILFER_MASTER_REPORT.md
+VERIFICATION_SYSTEM_DESIGN.md
+pilfer_infographic.png
+
+# Archive files
+*.zip

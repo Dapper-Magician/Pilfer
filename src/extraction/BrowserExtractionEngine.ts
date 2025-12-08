@@ -64,7 +64,9 @@ export class BrowserExtractionEngine implements ExtractionEngine {
         corsProxies: [
             'https://api.allorigins.win/get?url=',
             'https://cors-anywhere.herokuapp.com/',
-            'https://thingproxy.freeboard.io/fetch/'
+            'https://thingproxy.freeboard.io/fetch/',
+            'https://api.codetabs.com/v1/proxy?quest=',
+            'https://corsproxy.io/?'
         ],
         userAgent: 'Pilfer-Browser-Engine/1.0 (+https://github.com/your-org/pilfer)'
     };
@@ -187,7 +189,10 @@ export class BrowserExtractionEngine implements ExtractionEngine {
             }
 
             // Fallback to CORS proxies
-            for (const proxy of this.config.corsProxies) {
+            // Shuffle proxies to distribute load and avoid hitting the same failing proxy first every time
+            const shuffledProxies = [...this.config.corsProxies].sort(() => Math.random() - 0.5);
+            
+            for (const proxy of shuffledProxies) {
                 try {
                     const proxiedUrl = `${proxy}${encodeURIComponent(url)}`;
                     const response = await fetch(proxiedUrl, {
@@ -198,6 +203,8 @@ export class BrowserExtractionEngine implements ExtractionEngine {
                         const data = await response.json();
                         // Handle different proxy response formats
                         return data.contents || data.data || data;
+                    } else {
+                        console.warn(`[BrowserExtractionEngine] Proxy ${proxy} returned status ${response.status}`);
                     }
                 } catch (proxyError) {
                     console.warn(`[BrowserExtractionEngine] Proxy ${proxy} failed:`, proxyError);
