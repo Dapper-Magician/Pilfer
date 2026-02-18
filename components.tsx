@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import mermaid from 'mermaid';
+import DOMPurify from 'dompurify';
 import {
     ColorInfo, ComponentNode, ReconResult, PilferResult, RefactorResult,
     ComparativeResult, BlueprintResult, UnitTestResult, LiveResult, HistoryEntry,
@@ -234,7 +235,9 @@ export function BlueprintResultCard({ result }: { result: BlueprintResult }) {
                 try {
                     diagramRef.current.innerHTML = ''; // Clear previous
                     const { svg } = await mermaid.render(`mermaid-${Date.now()}`, result.diagram);
-                    diagramRef.current.innerHTML = svg;
+                    diagramRef.current.innerHTML = DOMPurify.sanitize(svg, {
+                        USE_PROFILES: { svg: true, svgFilters: true },
+                    });
                 } catch (e) {
                     console.error("Mermaid rendering failed:", e);
                     if (diagramRef.current) {
@@ -681,8 +684,9 @@ const [ChevronDown,ChevronUp,ChevronRight,ChevronLeft,X,Plus,Minus,Check,Search,
         const container = document.getElementById('root');
         ReactDOM.createRoot(container).render(React.createElement(PilferedComponent));
       } catch(e) {
+        const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         document.getElementById('root').innerHTML =
-          '<div class="pilfer-error"><strong>⚠ Render Error</strong>' + e.message + '\\n\\n' + (e.stack || '') + '</div>';
+          '<div class="pilfer-error"><strong>⚠ Render Error</strong>' + _esc(e.message) + '\\n\\n' + _esc(e.stack || '') + '</div>';
         console.error('[Safehouse]', e);
       }
     })();

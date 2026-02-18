@@ -16,10 +16,12 @@
     "cors": "^2.8.5",
     "css-tree": "^2.3.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
     "jsdom": "^22.1.0",
     "mermaid": "^10.9.4",
     "postcss": "^8.4.31",
-    "puppeteer": "^21.5.0",
+    "puppeteer": "^24.37.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsx": "^4.21.0"
@@ -32,6 +34,6 @@
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.24",
     "@types/react-dom": "^18.3.7",
-    "vite": "^4.5.14"
+    "vite": "^7.3.1"
   }
 }
