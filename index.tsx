@@ -548,59 +548,78 @@ function App() {
     const handleRecon = async () => {
         if (!chat) return;
         dispatch({ type: 'SET_APP_STATE', payload: 'CASING' });
-        
-        // Check if user has enabled real extraction
+
         const useRealExtraction = localStorage.getItem('pilferUseRealExtraction') === 'true';
-        
-        if (useRealExtraction && url && !pageSource) {
-            let relaySuccess = false;
-            
-            // Check for Local Relay first
+
+        // --- PATH A: Page source provided by user (always valid — real HTML) ---
+        if (pageSource) {
+            const prompt = `You are Pilfer's reconnaissance analyst. The user has provided raw HTML source from "${url || 'a target page'}". Your task is to extract the real design system from this actual HTML.
+
+**Persona:** ${getPersonaInstruction()}
+
+**Raw HTML Source:**
+\`\`\`html
+${pageSource.slice(0, 40000)}
+\`\`\`
+
+Analyze the HTML above and extract the REAL values — do not invent or guess anything not present in the code above.
+Return a single JSON object with:
+- colorPalette: real hex values found in inline styles, CSS vars, or class names
+- typography: real font-family declarations found in the HTML/style tags
+- coreStyles: real CSS rule blocks extracted verbatim from <style> tags
+- pageArchitecture: a stringified JSON array representing the actual DOM component hierarchy as node objects with 'name' and optional 'children'`;
+
+            const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: reconSchema }, 'Recon', `Recon (Source): ${url || 'pasted HTML'}`, chat, dispatch, handleError);
+            if (result) {
+                let pageArchitecture = [];
+                try {
+                    pageArchitecture = JSON.parse(result.pageArchitecture || '[]');
+                } catch {
+                    console.warn('[Pilfer] pageArchitecture was not valid JSON, defaulting to empty tree.');
+                }
+                const parsedResult: ReconResult = { ...result, pageArchitecture };
+                dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: result.id, type: 'Recon', title: `Recon (Source): ${url || 'pasted HTML'}`, timestamp: Date.now(), url } });
+                dispatch({ type: 'SET_RECON_RESULT', payload: parsedResult });
+            }
+            return;
+        }
+
+        // --- PATH B: Real extraction via Relay (Puppeteer) or Browser Engine ---
+        if (useRealExtraction && url) {
+            let extractionSucceeded = false;
+
+            // Tier 1: Puppeteer relay server
             const relayAvailable = await checkRelayHealth();
-            
             if (relayAvailable) {
                 try {
-                    console.log('[Pilfer] 🟢 Local Relay detected. Delegating extraction...');
-
+                    console.log('[Pilfer] 🟢 Relay online — delegating to Puppeteer...');
                     const response = await requestRelayExtraction({
                         url,
                         options: { timeout: 60000, extractAssets: true },
                         context: { persona, targetFramework: frameworkTarget },
                     });
-                    
                     if (response.ok) {
                         const relayResult = await response.json();
-                        if (relayResult && relayResult.success && relayResult.reconResult) {
-                            console.log('[Pilfer] Relay extraction successful:', relayResult);
-                            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
-                                id: relayResult.reconResult.id,
-                                type: 'Recon',
-                                title: `Relay Extraction: ${url}`,
-                                timestamp: Date.now(),
-                                url
-                            }});
+                        if (relayResult?.success && relayResult.reconResult) {
+                            console.log('[Pilfer] ✅ Relay extraction succeeded.', relayResult);
+                            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: relayResult.reconResult.id, type: 'Recon', title: `Recon (Puppeteer): ${url}`, timestamp: Date.now(), url } });
                             dispatch({ type: 'SET_RECON_RESULT', payload: relayResult.reconResult });
-                             
-                            if (relayResult.confidence > 0.6) {
-                                dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
-                                return;
-                            }
-                            relaySuccess = true; // Partial success, but maybe fallback to AI?
+                            dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
+                            extractionSucceeded = true;
                         }
                     }
                 } catch (relayError) {
-                    console.warn('[Pilfer] Relay extraction failed despite health check:', relayError);
+                    console.warn('[Pilfer] ⚠️ Relay failed after health check passed:', relayError);
                 }
             } else {
-                console.log('[Pilfer] 🔴 Local Relay unavailable. Falling back to Browser Engine.');
+                console.log('[Pilfer] 🔴 Relay offline — trying browser engine...');
             }
-            
-            if (!relaySuccess) {
-                // FALLBACK TO BROWSER ENGINE (Existing Logic)
+
+            // Tier 2: Browser engine (CORS proxy cascade) — best for static/SSR sites
+            if (!extractionSucceeded) {
                 try {
-                    console.log('[Pilfer] Initiating browser-based real extraction...');
+                    console.log('[Pilfer] Initiating browser-based extraction...');
                     const browserEngine = new BrowserExtractionEngine();
-    
                     const extractionRequest = {
                         url,
                         sessionId: `session-${Date.now()}`,
@@ -608,7 +627,7 @@ function App() {
                         mode: 'balanced' as const,
                         options: {
                             preferredEngine: 'real' as const,
-                            fallbackEngines: ['mock' as const],
+                            fallbackEngines: [],
                             timeout: 30000,
                             enableJavaScript: false,
                             captureScreenshots: false,
@@ -616,9 +635,9 @@ function App() {
                             extractAssets: true,
                             generateInsights: false,
                             analysisDepth: 'moderate' as const,
-                            confidenceThreshold: 0.7,
+                            confidenceThreshold: 0.5,
                             enableCaching: true,
-                            cacheStrategy: 'conservative' as const
+                            cacheStrategy: 'conservative' as const,
                         },
                         context: {
                             persona,
@@ -626,98 +645,91 @@ function App() {
                             targetStyling: stylingTarget,
                             previousExtractions: [],
                             userInsights: [],
-                            aiEnhancementLevel: 'basic' as const
+                            aiEnhancementLevel: 'basic' as const,
                         },
-                        onProgress: (progress: any) => console.log(`[Pilfer] Extraction progress: ${progress.phase} (${progress.percentage}%)`),
-                        onError: (error: any) => console.warn('[Pilfer] Extraction error:', error)
+                        onProgress: (progress: any) => console.log(`[Pilfer] Browser engine: ${progress.phase} (${progress.percentage}%)`),
+                        onError: (error: any) => console.warn('[Pilfer] Browser engine error:', error),
                     };
-    
-                    // Add a race with a timeout in case extract hangs significantly
                     const extractionPromise = browserEngine.extract(extractionRequest);
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Extraction timed out')), 35000));
-                    
+                    const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Extraction timed out after 35s')), 35000));
                     const extractionResult: any = await Promise.race([extractionPromise, timeoutPromise]);
-    
-                    if (extractionResult && extractionResult.success && extractionResult.reconResult) {
-                        console.log('[Pilfer] Browser extraction successful:', extractionResult);
-                        
-                        dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {
-                            id: extractionResult.reconResult.id,
-                            type: 'Recon',
-                            title: `Real Extraction: ${url}`,
-                            timestamp: Date.now(),
-                            url
-                        }});
-                        
+
+                    if (extractionResult?.success && extractionResult.reconResult) {
+                        console.log('[Pilfer] ✅ Browser extraction succeeded.', extractionResult);
+                        const warningNote = extractionResult.confidence < 0.5
+                            ? ' ⚠️ Low confidence — site may be a JavaScript SPA. Consider using the relay server for full accuracy.'
+                            : '';
+                        dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: extractionResult.reconResult.id, type: 'Recon', title: `Recon (Browser): ${url}`, timestamp: Date.now(), url } });
                         dispatch({ type: 'SET_RECON_RESULT', payload: extractionResult.reconResult });
-                        
-                        // If high confidence, we are done. Stop here.
-                        if (extractionResult.confidence > 0.6) {
-                            dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
-                            return;
-                        }
-                        console.log('[Pilfer] Low confidence extraction, falling back to AI enhancement...');
-                    } else {
-                         console.warn('[Pilfer] Real extraction returned failure/empty, falling back to AI.');
+                        if (warningNote) dispatch({ type: 'SET_ERROR', payload: warningNote });
+                        dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
+                        extractionSucceeded = true;
                     }
-                } catch (error) {
-                    console.warn('[Pilfer] Real extraction failed/timed out:', error);
-                    // Fall through to AI
+                } catch (browserError: any) {
+                    console.warn('[Pilfer] ⚠️ Browser extraction failed:', browserError?.message);
                 }
             }
-        }
-        
-        // Original AI-based reconnaissance (mock extraction)
-        const contextInstruction = pageSource
-            ? `You will analyze the provided HTML source code for the website at the URL "${url}".\n\`\`\`html\n${pageSource}\n\`\`\``
-            : `You do not "visit" or "scrape" the URL. Instead, you leverage your extensive knowledge of this website at "${url}", its public design system, and common web patterns to deduce its core design assets.`;
 
-        const prompt = `You are a master digital thief... Your task is to perform reconnaissance...
-        **Persona:** ${getPersonaInstruction()}
-        **Target:** ${url}
-        **Reconnaissance Directive:** ${contextInstruction}
-        Return your findings as a single JSON object. The 'pageArchitecture' property must be a stringified JSON array of component nodes.`;
-        
-        const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: reconSchema }, 'Recon', `Recon: ${url}`, chat, dispatch, handleError);
-        if (result) {
-            let pageArchitecture = [];
-            try {
-                pageArchitecture = JSON.parse(result.pageArchitecture || '[]');
-            } catch {
-                console.warn('[Pilfer] pageArchitecture was not valid JSON, defaulting to empty tree.');
+            // Tier 3: Both tiers failed — honest error, no silent fallback to hallucination
+            if (!extractionSucceeded) {
+                dispatch({
+                    type: 'SET_ERROR',
+                    payload: `Extraction failed for "${url}". ` +
+                        `This site may block CORS requests or require JavaScript to render. ` +
+                        `For full accuracy: run the relay server (npm run relay), or paste the page HTML manually into the Page Source field.`,
+                });
             }
-            const parsedResult: ReconResult = { ...result, pageArchitecture };
-            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: result.id, type: 'Recon', title: `Recon: ${url}`, timestamp: Date.now(), url } });
-            dispatch({ type: 'SET_RECON_RESULT', payload: parsedResult });
+            return;
         }
+
+        // --- PATH C: No real extraction, no page source — guide the user ---
+        dispatch({
+            type: 'SET_ERROR',
+            payload: `Pilfer needs real data to work. Enable "Real Web Scraping" in Settings to activate live extraction, or paste the target page's HTML into the Page Source field for analysis.`,
+        });
     };
 
     const handlePlanHeist = async () => {
         if (!chat) return;
         dispatch({ type: 'SET_APP_STATE', payload: 'PLANNING_HEIST' });
 
-        // Construct context from Real Extraction if available
-        let extractionContext = "";
-        if (reconResult) {
-             extractionContext = `
-             **REAL EXTRACTION DATA AVAILABLE**
-             The user has performed a real browser extraction. Use this data as the Ground Truth.
-             - **Typography**: ${JSON.stringify(reconResult.typography)}
-             - **Colors**: ${JSON.stringify(reconResult.colorPalette)}
-             - **Assets**: ${JSON.stringify(reconResult.assets || {})} 
-             `;
-        }
+        // Build real extraction context block — this is the ground truth the AI works from
+        const hasRealData = !!reconResult;
+        const extractionContext = hasRealData ? `
+## EXTRACTED SITE DATA (Ground Truth — Do Not Invent Values)
+The following data was extracted directly from "${url}" via live web scraping.
+Use these values verbatim in your reconstruction. Do not substitute or guess.
 
-        const prompt = `You are a strategic mastermind planning a code heist...
-        **Persona:** ${getPersonaInstruction()}
-        ${useCoT ? "**Strategy:** Think step-by-step. First, analyze the requirements. Second, identify the key technical challenges. Third, outline the solution." : ""}
-        **Target URL:** ${url}
-        **Framework Target:** ${frameworkTarget}
-        **Styling Target:** ${stylingTarget}
-        **State Management:** ${stateTarget}
-        **User Refinement:** ${planRefinement}
-        ${extractionContext}
-        **Deliverables:** Return a single JSON object.`;
+### Color Palette (extracted)
+${reconResult!.colorPalette.map(c => `- ${c.name}: ${c.hex}`).join('\n')}
+
+### Typography (extracted)
+${reconResult!.typography.map(t => `- ${t.fontFamily} — used for: ${t.usage}`).join('\n')}
+
+### Core CSS Rules (extracted)
+${reconResult!.coreStyles.map(s => `**${s.name}:**\n\`\`\`css\n${s.code}\n\`\`\``).join('\n')}
+
+### Page Component Architecture (extracted)
+${JSON.stringify(reconResult!.pageArchitecture, null, 2)}
+` : `
+## NO EXTRACTION DATA
+Reconnaissance has not been performed yet. Run "Case The Joint" first to extract real data before planning a heist.
+`;
+
+        const prompt = `You are planning a component reconstruction heist. Your job is to outline exactly how to rebuild the requested component using ONLY the real extracted data below.
+
+**Persona:** ${getPersonaInstruction()}
+${useCoT ? '\n**Reasoning:** Think step by step — 1) identify which extracted values apply to this component, 2) decide the implementation strategy, 3) list any dependencies needed.\n' : ''}
+**Target URL:** ${url || 'N/A'}
+**Component Requested:** ${directive}
+**Output Framework:** ${frameworkTarget}
+**Styling Approach:** ${stylingTarget}
+**State Management:** ${stateTarget}
+**User Notes:** ${planRefinement || 'None'}
+
+${extractionContext}
+
+Write a concise implementation plan (not code). State which extracted colors, fonts, and CSS patterns map to this component. Name the exact values you will use. The main component must be named \`PilferedComponent\`.`;
 
         try {
             const response = await chat.sendMessage({ message: prompt });
@@ -737,11 +749,18 @@ function App() {
         if (!chat) return;
 
         const title = `Heist: ${directive.substring(0, 30)}...`;
-        const userMessage = planRefinement || "That plan looks good. Proceed with the heist.";
+        const userMessage = planRefinement || "Proceed with the plan as written.";
         const executionPrompt = `${userMessage}
-        ${useCoT ? "**Reasoning Process:** Explain your implementation logic briefly before generating code." : ""}
-        
-        Now, execute the plan and provide the final code as a single JSON object. Your response MUST follow the required JSON schema. For React, the main component MUST be named \`PilferedComponent\`.`;
+
+${useCoT ? '**Implementation Notes:** Briefly explain key decisions before the code block.\n' : ''}
+Execute the reconstruction plan and return the final component code as a single JSON object matching the required schema.
+
+CRITICAL RULES:
+1. The main exported component MUST be named exactly \`PilferedComponent\` — no other name.
+2. Use ONLY the extracted color values, font families, and CSS patterns from the plan above. Do not invent values.
+3. All styles must be self-contained: inline styles, a <style> block inside the component, or Tailwind classes. No external CSS file imports.
+4. Do not import from external libraries beyond React itself. If you need icons, use inline SVG. If you need animations, use CSS keyframes.
+5. The component must be renderable in isolation with zero dependencies beyond React.`;
 
         const result = await streamAndProcess<PilferResult>(executionPrompt, { responseMimeType: 'application/json', responseSchema: pilferSchema }, 'heist', title, chat, dispatch, handleError);
         
