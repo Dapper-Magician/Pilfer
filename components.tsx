@@ -566,104 +566,135 @@ export function SafehouseModal({ isOpen, onClose, component, onGenerateTests, on
     const [isGeneratingTests, setIsGeneratingTests] = useState(false);
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
+    const buildIframeDocument = (code: string, isReact: boolean): string => {
+        if (!isReact) {
+            return `<!DOCTYPE html><html><head>
+                <meta charset="UTF-8"/>
+                <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3/dist/tailwind.min.css" rel="stylesheet"/>
+                <style>body{margin:0;padding:1rem;font-family:sans-serif;background:#f0f2f5;color:#111}</style>
+            </head><body>${code}</body></html>`;
+        }
+
+        // --- Code processing pipeline ---
+        let processed = code;
+
+        // 1. Strip all import statements (handled by shims below)
+        processed = processed.replace(/^import\s[^;]+;?\s*$/gm, '');
+
+        // 2. Handle styled-components: extract CSS from template literal and apply as a <style> block
+        const styledCssBlocks: string[] = [];
+        processed = processed.replace(
+            /const\s+(\w+)\s*=\s*styled(?:\.\w+|\([^)]+\))`([^`]*)`/gms,
+            (_match, name, css) => {
+                const className = `sc-${name.toLowerCase()}`;
+                const cleanCss = css.replace(/\$\{[^}]+\}/g, '').trim();
+                if (cleanCss) styledCssBlocks.push(`.${className} { ${cleanCss} }`);
+                return `const ${name} = ({ children, className: _cls, ...props }) => React.createElement('div', { ...props, className: \`${className} \${_cls||''}\` }, children)`;
+            }
+        );
+
+        // 3. Strip remaining template literal interpolations (leftover from styled-components)
+        processed = processed.replace(/\$\{[^}]+\}/g, "''");
+
+        // 4. Strip export keywords (keep declarations)
+        processed = processed.replace(/export\s+default\s+(\w+)\s*;?/gm, '// export default $1');
+        processed = processed.replace(/export\s+\{[^}]*\}\s*;?/gm, '');
+        processed = processed.replace(/export\s+(const|let|var|function|class)\s+/gm, '$1 ');
+
+        // 5. Fix double React. prefix from previous transforms
+        processed = processed.replace(/React\.React\./g, 'React.');
+
+        // 6. Prefix bare React hooks that don't already have React. prefix
+        const hooks = ['useState','useEffect','useRef','useMemo','useCallback','useContext','useReducer','useLayoutEffect','useId','useTransition'];
+        hooks.forEach(hook => {
+            processed = processed.replace(new RegExp(`(?<!React\\.|\\.)\\b(${hook})\\b`, 'g'), `React.$1`);
+        });
+
+        // 7. Detect main component name and alias to PilferedComponent if different
+        const componentMatch = processed.match(/(?:function|const)\s+([A-Z][A-Za-z0-9_]*)\s*(?:=|\()/);
+        const detectedName = componentMatch?.[1];
+        const needsAlias = detectedName && detectedName !== 'PilferedComponent';
+        const aliasLine = needsAlias ? `const PilferedComponent = typeof ${detectedName} !== 'undefined' ? ${detectedName} : () => null;` : '';
+
+        const styledCss = styledCssBlocks.length > 0
+            ? `<style>\n${styledCssBlocks.join('\n')}\n</style>`
+            : '';
+
+        // Common library shims injected before user code runs
+        const shims = `
+// --- Pilfer Safehouse Shims ---
+// cn / clsx utility
+const cn = (...classes) => classes.filter(Boolean).join(' ');
+const clsx = cn;
+
+// Minimal framer-motion stub — renders children with optional style/className
+const motion = new Proxy({}, { get: (_, tag) => ({ children, style, className, animate, initial, exit, transition, variants, whileHover, whileTap, ...rest }) => React.createElement(tag, { style, className, ...rest }, children) });
+const AnimatePresence = ({ children }) => children;
+
+// Minimal react-router-dom stubs
+const useNavigate = () => () => {};
+const useLocation = () => ({ pathname: '/', search: '', hash: '', state: null });
+const useParams = () => ({});
+const Link = ({ to, children, ...props }) => React.createElement('a', { href: to, ...props }, children);
+
+// Lucide-react icon stub — renders a labeled SVG placeholder
+const LucideIcon = (name) => ({ size = 24, color = 'currentColor', strokeWidth = 2, className, style, ...rest }) =>
+    React.createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth, strokeLinecap: 'round', strokeLinejoin: 'round', className, style, ...rest },
+        React.createElement('rect', { x: 2, y: 2, width: 20, height: 20, rx: 3 }),
+        React.createElement('text', { x: 12, y: 15, textAnchor: 'middle', fontSize: 7, fill: color, stroke: 'none' }, name.slice(0, 4))
+    );
+// Expose commonly used icons
+const [ChevronDown,ChevronUp,ChevronRight,ChevronLeft,X,Plus,Minus,Check,Search,Menu,Home,Settings,User,Mail,Phone,Star,Heart,Edit,Trash,Download,Upload,ExternalLink,Copy,Eye,EyeOff,Lock,Unlock,Bell,Info,AlertCircle,CheckCircle,XCircle,ArrowRight,ArrowLeft,Loader,Refresh,Share,Filter,Sort,Grid,List] =
+    ['ChevronDown','ChevronUp','ChevronRight','ChevronLeft','X','Plus','Minus','Check','Search','Menu','Home','Settings','User','Mail','Phone','Star','Heart','Edit','Trash','Download','Upload','ExternalLink','Copy','Eye','EyeOff','Lock','Unlock','Bell','Info','AlertCircle','CheckCircle','XCircle','ArrowRight','ArrowLeft','Loader','Refresh','Share','Filter','Sort','Grid','List']
+    .map(LucideIcon);
+// --- End Shims ---
+`;
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Safehouse Preview</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3/dist/tailwind.min.css" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+  ${styledCss}
+  <style>
+    body { margin: 0; padding: 1.5rem; font-family: system-ui, sans-serif; background: #f8f9fa; color: #1a1a1a; }
+    #root { min-height: calc(100vh - 3rem); }
+    .pilfer-error { background:#fff0f0; border:1px solid #ff4d4d; border-radius:6px; padding:1rem; font-family:monospace; font-size:0.85rem; color:#cc0000; white-space:pre-wrap; word-break:break-word; }
+    .pilfer-error strong { display:block; margin-bottom:0.5rem; font-size:1rem; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    (() => {
+      const { useState, useEffect, useRef, useMemo, useCallback, useContext, useReducer, useLayoutEffect, useId, useTransition } = React;
+      ${shims}
+      try {
+        ${processed}
+        ${aliasLine}
+        if (typeof PilferedComponent === 'undefined') throw new Error('No component named PilferedComponent found. Check the component name in the editor.');
+        const container = document.getElementById('root');
+        ReactDOM.createRoot(container).render(React.createElement(PilferedComponent));
+      } catch(e) {
+        document.getElementById('root').innerHTML =
+          '<div class="pilfer-error"><strong>⚠ Render Error</strong>' + e.message + '\\n\\n' + (e.stack || '') + '</div>';
+        console.error('[Safehouse]', e);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+    };
+
     const updatePreview = (code: string) => {
         if (!iframeRef.current || !component) return;
-
-        const isReact = component.techStack.some(t => t.toLowerCase().includes('react'));
-        // Vue/Svelte support can be added with a similar pattern
-
-        if (isReact) {
-            // Process the code to make it browser-compatible
-            let processedCode = code;
-            
-            // Remove ALL import statements (including multi-line imports)
-            processedCode = processedCode.replace(/import\s+(?:[^;]+from\s+)?['"][^'"]+['"];?/gms, '');
-            
-            // Remove styled-components template literals and replace with basic React components
-            // Match styled.div`...` or styled(Component)`...` patterns
-            processedCode = processedCode.replace(/const\s+(\w+)\s*=\s*styled\.\w+`[^`]*`/gms, (match, componentName) => {
-                return `const ${componentName} = ({ children, ...props }) => React.createElement('div', props, children)`;
-            });
-            processedCode = processedCode.replace(/const\s+(\w+)\s*=\s*styled\([^)]+\)`[^`]*`/gms, (match, componentName) => {
-                return `const ${componentName} = ({ children, ...props }) => React.createElement('div', props, children)`;
-            });
-            
-            // Handle template literal variables in styled-components (remove them)
-            processedCode = processedCode.replace(/\$\{[^}]+\}/g, '');
-            
-            // Remove ALL export statements
-            processedCode = processedCode.replace(/export\s+default\s+[^;\n]+;?/gm, '');
-            processedCode = processedCode.replace(/export\s+\{[^}]*\};?/gm, '');
-            processedCode = processedCode.replace(/export\s+(const|let|var|function|class)\s+/gm, '$1 ');
-            
-            // Fix React hook references that might already have React. prefix
-            processedCode = processedCode.replace(/React\.React\./g, 'React.');
-            
-            // Ensure hooks are properly prefixed if they're not already
-            const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer'];
-            hooks.forEach(hook => {
-                // Only add React. prefix if it's not already there
-                const regex = new RegExp(`(?<!React\\.)\\b${hook}\\b`, 'g');
-                processedCode = processedCode.replace(regex, `React.${hook}`);
-            });
-            
-            const html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8" />
-                    <title>Safehouse Preview</title>
-                    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-                    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-                    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
-                    <style>
-                        body { margin: 0; padding: 1rem; font-family: sans-serif; background-color: #f0f2f5; color: #111; }
-                        #root { min-height: calc(100vh - 2rem); }
-                    </style>
-                </head>
-                <body>
-                    <div id="root"></div>
-                    <script type="text/babel">
-                        (() => {
-                            // Make React hooks available globally for the component
-                            const { useState, useEffect, useRef, useMemo, useCallback, useContext, useReducer } = React;
-                            
-                            try {
-                                // User's component code goes here
-                                ${processedCode}
-                                
-                                // Render the component
-                                const container = document.getElementById('root');
-                                const root = ReactDOM.createRoot(container);
-                                root.render(React.createElement(PilferedComponent));
-                            } catch (e) {
-                                const rootEl = document.getElementById('root');
-                                rootEl.innerHTML = '<pre style="color: red; white-space: pre-wrap;">Render Error: ' + e.message + '\\n' + e.stack + '</pre>';
-                                console.error('Component render error:', e);
-                            }
-                        })();
-                    </script>
-                </body>
-                </html>
-            `;
-            iframeRef.current.srcdoc = html;
-        } else {
-            // Fallback for plain HTML/JS/Web Components
-            const html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        body { margin: 0; padding: 1rem; font-family: sans-serif; background-color: #f0f2f5; color: #111 }
-                    </style>
-                </head>
-                <body>
-                    ${code}
-                </body>
-                </html>
-            `;
-            iframeRef.current.srcdoc = html;
-        }
+        const isReact = component.techStack.some(t => ['react','next','remix','gatsby'].some(f => t.toLowerCase().includes(f)));
+        iframeRef.current.srcdoc = buildIframeDocument(code, isReact);
     };
 
     useEffect(() => {
@@ -709,7 +740,7 @@ export function SafehouseModal({ isOpen, onClose, component, onGenerateTests, on
                     </div>
                     <div className="safehouse-pane preview-pane">
                         <h4>Live Preview</h4>
-                        <iframe ref={iframeRef} title="Live Component Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
+                        <iframe ref={iframeRef} title="Live Component Preview" sandbox="allow-scripts allow-forms allow-modals allow-downloads" referrerPolicy="no-referrer"></iframe>
                     </div>
                 </div>
                 <div className="safehouse-tests">
