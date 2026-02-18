@@ -132,7 +132,7 @@ const initialState: AppState = {
     compareDirective: '',
     analysisMode: 'single',
     auditType: 'heist',
-    frameworkTarget: 'react',
+    frameworkTarget: 'auto',
     stylingTarget: 'tailwind',
     stateTarget: 'hooks',
     persona: 'professor',
@@ -545,6 +545,19 @@ function App() {
         cleaner: "You are 'The Cleaner'. You fix messes. Your code is robust, production-ready, and defensive. You prioritize error handling, type safety (TypeScript), and performance. You meticulously document edge cases and use industry-standard practices. No shortcuts.",
     })[persona];
 
+    // Maps a detected framework string from the extraction engine to a known FrameworkTarget
+    const resolveFrameworkTarget = (detected: string | undefined): FrameworkTarget | null => {
+        if (!detected) return null;
+        const map: Record<string, FrameworkTarget> = {
+            next: 'next', remix: 'remix', react: 'react',
+            nuxt: 'nuxt', vue: 'vue',
+            svelte: 'svelte', angular: 'angular',
+            astro: 'astro', alpine: 'alpine', htmx: 'htmx',
+            vanilla: 'plain_js', 'plain_js': 'plain_js', 'plain-js': 'plain_js',
+        };
+        return map[detected.toLowerCase()] ?? null;
+    };
+
     const handleRecon = async () => {
         if (!chat) return;
         dispatch({ type: 'SET_APP_STATE', payload: 'CASING' });
@@ -604,6 +617,10 @@ Return a single JSON object with:
                             console.log('[Pilfer] ✅ Relay extraction succeeded.', relayResult);
                             dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: relayResult.reconResult.id, type: 'Recon', title: `Recon (Puppeteer): ${url}`, timestamp: Date.now(), url } });
                             dispatch({ type: 'SET_RECON_RESULT', payload: relayResult.reconResult });
+                            if (frameworkTarget === 'auto') {
+                                const resolved = resolveFrameworkTarget(relayResult.reconResult.detectedFramework);
+                                if (resolved) dispatch({ type: 'SET_FIELD', payload: { field: 'frameworkTarget', value: resolved } });
+                            }
                             dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
                             extractionSucceeded = true;
                         }
@@ -661,6 +678,10 @@ Return a single JSON object with:
                             : '';
                         dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: extractionResult.reconResult.id, type: 'Recon', title: `Recon (Browser): ${url}`, timestamp: Date.now(), url } });
                         dispatch({ type: 'SET_RECON_RESULT', payload: extractionResult.reconResult });
+                        if (frameworkTarget === 'auto') {
+                            const resolved = resolveFrameworkTarget(extractionResult.reconResult.detectedFramework);
+                            if (resolved) dispatch({ type: 'SET_FIELD', payload: { field: 'frameworkTarget', value: resolved } });
+                        }
                         if (warningNote) dispatch({ type: 'SET_ERROR', payload: warningNote });
                         dispatch({ type: 'SET_APP_STATE', payload: 'IDLE' });
                         extractionSucceeded = true;
@@ -1052,7 +1073,32 @@ CRITICAL RULES:
                             </div>
                              <div className="section-title">Target Tech</div>
                              <div className="form-group-inline">
-                                 <div className="form-group"><label>Framework</label><select value={frameworkTarget} onChange={e => setField('frameworkTarget', e.target.value as FrameworkTarget)}><option value="react">React</option><option value="vue">Vue</option><option value="svelte">Svelte</option></select></div>
+                                 <div className="form-group">
+                                    <label>Framework{reconResult?.detectedFramework ? ` — detected: ${reconResult.detectedFramework}` : ''}</label>
+                                    <select value={frameworkTarget} onChange={e => setField('frameworkTarget', e.target.value as FrameworkTarget)}>
+                                        <option value="auto">Auto (match detected)</option>
+                                        <optgroup label="React Family">
+                                            <option value="react">React</option>
+                                            <option value="next">Next.js</option>
+                                            <option value="remix">Remix</option>
+                                        </optgroup>
+                                        <optgroup label="Vue Family">
+                                            <option value="vue">Vue</option>
+                                            <option value="nuxt">Nuxt</option>
+                                        </optgroup>
+                                        <optgroup label="Other Frameworks">
+                                            <option value="svelte">Svelte</option>
+                                            <option value="angular">Angular</option>
+                                            <option value="astro">Astro</option>
+                                            <option value="alpine">Alpine.js</option>
+                                            <option value="htmx">HTMX</option>
+                                        </optgroup>
+                                        <optgroup label="No Framework">
+                                            <option value="web_component">Web Components</option>
+                                            <option value="plain_js">Plain HTML/JS</option>
+                                        </optgroup>
+                                    </select>
+                                </div>
                                  <div className="form-group"><label>Styling</label><select value={stylingTarget} onChange={e => setField('stylingTarget', e.target.value as StylingTarget)}><option value="tailwind">Tailwind</option><option value="plain_css">Plain CSS</option><option value="styled_components">Styled Components</option></select></div>
                                  <div className="form-group"><label>State</label><select value={stateTarget} onChange={e => setField('stateTarget', e.target.value as StateTarget)}><option value="hooks">Hooks</option><option value="redux">Redux</option></select></div>
                              </div>

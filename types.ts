@@ -20,7 +20,7 @@ export interface TypographyInfo { fontFamily: string; usage: string; }
 export interface CoreStyleInfo { name: string; code: string; }
 export interface ComponentNode { name: string; children?: ComponentNode[]; }
 
-export interface ReconResult { id: string; colorPalette: ColorInfo[]; typography: TypographyInfo[]; coreStyles: CoreStyleInfo[]; pageArchitecture: ComponentNode[]; assets?: AssetIntelligence; }
+export interface ReconResult { id: string; colorPalette: ColorInfo[]; typography: TypographyInfo[]; coreStyles: CoreStyleInfo[]; pageArchitecture: ComponentNode[]; assets?: AssetIntelligence; detectedFramework?: string; }
 export interface PilferResult { id:string; name: string; techStack: string[]; architecturalNotes: string; code: string; rationale: string; tags: string[]; }
 export interface RefactorResult { id: string; name: string; explanation: string; refactoredCode: string; tags: string[]; }
 export interface ComparativeResult { id: string; summary: string; subject1: { title: string; notes: string; }, subject2: { title: string; notes: string; } }
@@ -324,7 +324,7 @@ export interface HistoricalSession extends SessionWorkspace {
 export type AppStatus = 'IDLE' | 'CASING' | 'HEISTING' | 'PLANNING_HEIST' | 'AWAITING_CONFIRMATION';
 export type AnalysisMode = 'single' | 'compare';
 export type AuditType = 'heist' | 'accessibility' | 'performance' | 'security' | 'refactor' | 'blueprint';
-export type FrameworkTarget = 'react' | 'vue' | 'svelte' | 'web_component' | 'plain_js';
+export type FrameworkTarget = 'auto' | 'react' | 'next' | 'remix' | 'vue' | 'nuxt' | 'svelte' | 'angular' | 'astro' | 'alpine' | 'htmx' | 'web_component' | 'plain_js';
 export type StylingTarget = 'plain_css' | 'tailwind' | 'styled_components' | 'css_modules';
 export type StateTarget = 'hooks' | 'redux' | 'vuex' | 'svelte_stores' | 'none';
 export type Persona = 'ghost' | 'professor' | 'cleaner';
