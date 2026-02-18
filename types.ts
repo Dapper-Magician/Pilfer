@@ -403,5 +403,4 @@ export type AppAction =
     | { type: 'ARCHIVE_CURRENT_SESSION' }
     | { type: 'RESTORE_HISTORICAL_SESSION'; payload: string } // sessionId
     | { type: 'TOGGLE_SESSION_VIEW' }
-    | { type: 'TOGGLE_SESSION_VIEW' }
     | { type: 'DELETE_HISTORICAL_SESSION'; payload: string }; // sessionId

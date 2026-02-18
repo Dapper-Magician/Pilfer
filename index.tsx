@@ -16,6 +16,7 @@ import {
 import { retryWithBackoff } from './src/utils/retry';
 import { PilferError, useErrorHandler } from './src/hooks/useErrorHandler';
 import { ExportService } from './src/services/ExportService';
+import { checkRelayHealth, requestRelayExtraction } from './src/utils/relay';
 
 
 // --- HELPERS ---
@@ -55,19 +56,6 @@ function extractAndParseJson<T>(text: string): T {
         throw new Error("The AI response was not in a valid JSON format, even after extraction.");
     }
 }
-    const checkRelayHealth = async () => {
-        try {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 1000);
-            const res = await fetch('http://localhost:3000/health', { signal: controller.signal });
-            clearTimeout(id);
-            return res.ok;
-        } catch (e) {
-            return false;
-        }
-    };
-
-
 // --- AI & API CONFIG ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
 
@@ -460,10 +448,12 @@ function App() {
     useEffect(() => {
         const persistableState = {
             url, reconResult, deepDiveResults, comparativeResults, refactorResults,
-            blueprintResults, sessionHistory, theme, fontSize, layout, chatHistory: state.chatHistory,
+            blueprintResults, sessionHistory, theme, fontSize, layout,
+            chatHistory: state.chatHistory,
+            currentSession, historicalSessions,
         };
         localStorage.setItem('pilferSession', JSON.stringify(persistableState));
-    }, [url, reconResult, deepDiveResults, comparativeResults, refactorResults, blueprintResults, sessionHistory, theme, fontSize, layout, state.chatHistory]);
+    }, [url, reconResult, deepDiveResults, comparativeResults, refactorResults, blueprintResults, sessionHistory, theme, fontSize, layout, state.chatHistory, currentSession, historicalSessions]);
 
     useEffect(() => {
         if (!chat) {
@@ -571,15 +561,11 @@ function App() {
             if (relayAvailable) {
                 try {
                     console.log('[Pilfer] 🟢 Local Relay detected. Delegating extraction...');
-                    
-                    const response = await fetch('http://localhost:3000/extract', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            url,
-                            options: { timeout: 60000, extractAssets: true },
-                            context: { persona, targetFramework: frameworkTarget }
-                        })
+
+                    const response = await requestRelayExtraction({
+                        url,
+                        options: { timeout: 60000, extractAssets: true },
+                        context: { persona, targetFramework: frameworkTarget },
                     });
                     
                     if (response.ok) {
@@ -694,8 +680,14 @@ function App() {
         
         const result = await streamAndProcess<any>(prompt, { responseMimeType: 'application/json', responseSchema: reconSchema }, 'Recon', `Recon: ${url}`, chat, dispatch, handleError);
         if (result) {
-            const parsedResult: ReconResult = { ...result, pageArchitecture: JSON.parse(result.pageArchitecture || '[]') };
-            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: {id: result.id, type: 'Recon', title: `Recon: ${url}`, timestamp: Date.now(), url} });
+            let pageArchitecture = [];
+            try {
+                pageArchitecture = JSON.parse(result.pageArchitecture || '[]');
+            } catch {
+                console.warn('[Pilfer] pageArchitecture was not valid JSON, defaulting to empty tree.');
+            }
+            const parsedResult: ReconResult = { ...result, pageArchitecture };
+            dispatch({ type: 'ADD_HISTORY_ENTRY', payload: { id: result.id, type: 'Recon', title: `Recon: ${url}`, timestamp: Date.now(), url } });
             dispatch({ type: 'SET_RECON_RESULT', payload: parsedResult });
         }
     };
@@ -882,7 +874,70 @@ function App() {
         }
     };
 
-    const handleExportMarkdown = () => { /* ... implementation unchanged ... */ };
+    const handleExportMarkdown = () => {
+        const lines: string[] = [
+            `# Pilfer Session Export`,
+            `**Target:** ${url || 'N/A'}`,
+            `**Date:** ${new Date().toLocaleString()}`,
+            `**Results:** ${sessionHistory.length}`,
+            '',
+            '---',
+            '',
+        ];
+
+        if (reconResult) {
+            lines.push('## Reconnaissance Results');
+            lines.push(`### Color Palette`);
+            reconResult.colorPalette.forEach(c => lines.push(`- **${c.name}**: \`${c.hex}\``));
+            lines.push('');
+            lines.push('### Typography');
+            reconResult.typography.forEach(t => lines.push(`- **${t.fontFamily}** — ${t.usage}`));
+            lines.push('');
+        }
+
+        Object.values(deepDiveResults).forEach((result: PilferResult) => {
+            lines.push(`## Heist: ${result.name}`);
+            lines.push(`**Tech Stack:** ${result.techStack.join(', ')}`);
+            lines.push('');
+            lines.push('### Architectural Notes');
+            lines.push(result.architecturalNotes);
+            lines.push('');
+            lines.push('### Implementation Code');
+            lines.push('```tsx');
+            lines.push(result.code);
+            lines.push('```');
+            lines.push('');
+            lines.push('### Design Rationale');
+            lines.push(result.rationale);
+            lines.push('');
+            lines.push(`**Tags:** ${result.tags.join(', ')}`);
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+        });
+
+        Object.values(refactorResults).forEach((result: RefactorResult) => {
+            lines.push(`## Refactor: ${result.name}`);
+            lines.push(result.explanation);
+            lines.push('');
+            lines.push('```tsx');
+            lines.push(result.refactoredCode);
+            lines.push('```');
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+        });
+
+        const markdown = lines.join('\n');
+        const blob = new Blob([markdown], { type: 'text/markdown' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `pilfer-session-${Date.now()}.md`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+    };
     
     const renderedHistory = useMemo(() => sessionHistory.slice().reverse(), [sessionHistory]);
 
